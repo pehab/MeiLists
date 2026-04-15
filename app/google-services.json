@@ -1,0 +1,76 @@
+{
+  "project_info": {
+    "project_number": "66101709976",
+    "project_id": "meicaller",
+    "storage_bucket": "meicaller.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:66101709976:android:65bb055b6e40c2b023d4ed",
+        "android_client_info": {
+          "package_name": "de.haberland.meicaller"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "66101709976-vj5e359qe9nsvjj2vh95v609jkpu4sdm.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyC10ExcoCFeDKLQ2k7JwNk8l9REHXxZ2gs"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "66101709976-vj5e359qe9nsvjj2vh95v609jkpu4sdm.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:66101709976:android:d50ec9423e55aef523d4ed",
+        "android_client_info": {
+          "package_name": "de.haberland.meilists"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "66101709976-9mj26ljbol6phpi2tonv6utti99llak3.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "de.haberland.meilists",
+            "certificate_hash": "5e8f16062ecbcdfb5e649336209c1d30a5a8140e"
+          }
+        },
+        {
+          "client_id": "66101709976-vj5e359qe9nsvjj2vh95v609jkpu4sdm.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyC10ExcoCFeDKLQ2k7JwNk8l9REHXxZ2gs"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "66101709976-vj5e359qe9nsvjj2vh95v609jkpu4sdm.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

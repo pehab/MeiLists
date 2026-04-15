@@ -1,0 +1,5 @@
+<resources>
+    <string name="app_name">MeiLists</string>
+    <!-- Replace this with your actual Web Client ID from Firebase/Google Cloud Console -->
+    <string name="default_web_client_id">66101709976-vj5e359qe9nsvjj2vh95v609jkpu4sdm.apps.googleusercontent.com</string>
+</resources>
