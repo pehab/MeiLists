@@ -23,7 +23,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -151,7 +153,7 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
                 Text(
                     text = "Kategorien",
                     modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
-                    style = MaterialTheme.typography.titleLarge, // Größerer Header
+                    style = MaterialTheme.typography.titleLarge,
                     color = MaterialTheme.colorScheme.primary
                 )
                 HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp))
@@ -210,9 +212,14 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
                         }
                     },
                     actions = {
-                        if (selectedListId != null && items.any { it.listId == selectedListId && it.isChecked }) {
-                            IconButton(onClick = { viewModel.deleteCheckedItems(selectedListId!!) }) {
-                                Icon(Icons.Default.Delete, contentDescription = "Erledigte löschen")
+                        if (selectedListId != null) {
+                            IconButton(onClick = { viewModel.deleteList(selectedListId!!) }) {
+                                Icon(Icons.Default.DeleteForever, contentDescription = "Liste löschen", tint = MaterialTheme.colorScheme.error)
+                            }
+                            if (items.any { it.listId == selectedListId && it.isChecked }) {
+                                IconButton(onClick = { viewModel.deleteCheckedItems(selectedListId!!) }) {
+                                    Icon(Icons.Default.Delete, contentDescription = "Erledigte löschen")
+                                }
                             }
                         }
                     },
@@ -303,6 +310,10 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
             onSave = { hideChecked, color ->
                 viewModel.updateCategorySettings(category.id, hideChecked, color.toArgb().toLong())
                 showSettingsDialog = null
+            },
+            onDelete = {
+                viewModel.deleteCategory(category.id)
+                showSettingsDialog = null
             }
         )
     }
@@ -380,9 +391,28 @@ fun AddEntryDialog(type: AddType, onDismiss: () -> Unit, onConfirm: (String, Col
 }
 
 @Composable
-fun SettingsDialog(category: Category, onDismiss: () -> Unit, onSave: (Boolean, Color) -> Unit) {
+fun SettingsDialog(category: Category, onDismiss: () -> Unit, onSave: (Boolean, Color) -> Unit, onDelete: () -> Unit) {
     var hideChecked by remember { mutableStateOf(category.settings.hideCheckedItems) }
     var selectedColor by remember { mutableStateOf(Color(category.color)) }
+    val clipboardManager = LocalClipboardManager.current
+    var showDeleteConfirm by remember { mutableStateOf(false) }
+
+    if (showDeleteConfirm) {
+        AlertDialog(
+            onDismissRequest = { showDeleteConfirm = false },
+            title = { Text("Kategorie löschen?") },
+            text = { Text("Möchtest du die Kategorie '${category.name}' und alle darin enthaltenen Listen wirklich löschen?") },
+            confirmButton = {
+                Button(
+                    onClick = onDelete,
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+                ) { Text("Endgültig löschen") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDeleteConfirm = false }) { Text("Abbrechen") }
+            }
+        )
+    }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -399,7 +429,29 @@ fun SettingsDialog(category: Category, onDismiss: () -> Unit, onSave: (Boolean, 
                 
                 Spacer(Modifier.height(16.dp))
                 Text("Kategorie-ID (zum Teilen):", style = MaterialTheme.typography.labelMedium)
-                Text(category.id, style = MaterialTheme.typography.bodySmall)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        category.id, 
+                        style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier.weight(1f)
+                    )
+                    IconButton(onClick = { clipboardManager.setText(AnnotatedString(category.id)) }) {
+                        Icon(Icons.Default.ContentCopy, contentDescription = "ID kopieren", modifier = Modifier.size(20.dp))
+                    }
+                }
+                
+                Spacer(Modifier.height(16.dp))
+                HorizontalDivider()
+                Spacer(Modifier.height(8.dp))
+                TextButton(
+                    onClick = { showDeleteConfirm = true },
+                    colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Icon(Icons.Default.Delete, contentDescription = null)
+                    Spacer(Modifier.width(8.dp))
+                    Text("Kategorie löschen")
+                }
             }
         },
         confirmButton = {

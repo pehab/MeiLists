@@ -16,15 +16,16 @@ import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.auth.FirebaseUser
 import com.google.firebase.auth.GoogleAuthProvider
 import com.google.firebase.crashlytics.FirebaseCrashlytics
-import com.google.firebase.firestore.DocumentSnapshot
-import com.google.firebase.firestore.FirebaseFirestore
-import com.google.firebase.firestore.FirebaseFirestoreException
-import com.google.firebase.firestore.QuerySnapshot
+import com.google.firebase.firestore.*
 import de.haberland.meilists.model.*
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
+
+sealed class UiEvent {
+    data class ShowToast(val message: String) : UiEvent()
+}
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val dao = AppDatabase.getDatabase(application).shoppingDao()
@@ -32,6 +33,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val firestore = FirebaseFirestore.getInstance()
     private val credentialManager = CredentialManager.create(application)
     private val crashlytics = FirebaseCrashlytics.getInstance()
+
+    private val activeListeners = mutableMapOf<String, ListenerRegistration>()
+    
+    private val _uiEvent = MutableSharedFlow<UiEvent>()
+    val uiEvent = _uiEvent.asSharedFlow()
 
     val currentUser: StateFlow<FirebaseUser?> = callbackFlow {
         val listener = FirebaseAuth.AuthStateListener { firebaseAuth ->
@@ -83,6 +89,20 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 if (user != null) {
                     crashlytics.setUserId(user.uid)
                     syncWithFirebase()
+                } else {
+                    clearAllListeners()
+                }
+            }
+        }
+
+        viewModelScope.launch {
+            combine(selectedCategoryId, lists) { catId, allLists ->
+                catId to allLists.filter { it.categoryId == catId }
+            }.collectLatest { (catId, catLists) ->
+                if (catId != null && (_selectedListId.value == null || catLists.none { it.id == _selectedListId.value })) {
+                    if (catLists.isNotEmpty()) {
+                        _selectedListId.value = catLists.first().id
+                    }
                 }
             }
         }
@@ -90,44 +110,40 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             categories.collectLatest { 
                 if (_selectedCategoryId.value == null && it.isNotEmpty()) {
-                    _selectedCategoryId.value = it.first().id
+                    selectCategory(it.first().id)
                 }
             }
         }
+    }
+
+    private fun clearAllListeners() {
+        activeListeners.values.forEach { it.remove() }
+        activeListeners.clear()
+    }
+
+    override fun onCleared() {
+        super.onCleared()
+        clearAllListeners()
     }
 
     fun signInWithGoogle(context: android.content.Context) {
         viewModelScope.launch {
             try {
                 val clientId = context.getString(R.string.default_web_client_id)
-                
                 val googleIdOption = GetGoogleIdOption.Builder()
                     .setFilterByAuthorizedAccounts(false)
                     .setServerClientId(clientId)
                     .setAutoSelectEnabled(false)
                     .build()
-
-                val request = GetCredentialRequest.Builder()
-                    .addCredentialOption(googleIdOption)
-                    .build()
-
-                val result = credentialManager.getCredential(
-                    context = context,
-                    request = request
-                )
-
+                val request = GetCredentialRequest.Builder().addCredentialOption(googleIdOption).build()
+                val result = credentialManager.getCredential(context = context, request = request)
                 val credential = result.credential
                 if (credential.type == GoogleIdTokenCredential.TYPE_GOOGLE_ID_TOKEN_CREDENTIAL) {
                     val googleIdTokenCredential = GoogleIdTokenCredential.createFrom(credential.data)
                     val firebaseCredential = GoogleAuthProvider.getCredential(googleIdTokenCredential.idToken, null)
                     auth.signInWithCredential(firebaseCredential).await()
+                    _uiEvent.emit(UiEvent.ShowToast("Anmeldung erfolgreich!"))
                 }
-            } catch (e: NoCredentialException) {
-                Log.e("MeiLists", "Keine Konten gefunden.")
-            } catch (e: GetCredentialCancellationException) {
-                // Nutzer hat abgebrochen
-            } catch (e: GetCredentialException) {
-                Log.e("MeiLists", "Credential Manager Fehler: ${e.message}")
             } catch (e: Exception) {
                 Log.e("MeiLists", "Login Fehler: ${e.message}")
             }
@@ -138,41 +154,112 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             auth.signOut()
             credentialManager.clearCredentialState(ClearCredentialStateRequest())
+            clearAllListeners()
+            _uiEvent.emit(UiEvent.ShowToast("Abgemeldet."))
         }
     }
 
     private fun syncWithFirebase() {
         val user = auth.currentUser ?: return
         
-        firestore.collection("categories")
+        val categoryListener = firestore.collection("categories")
             .whereArrayContains("allowedUsers", user.uid)
             .addSnapshotListener { snapshot: QuerySnapshot?, e: FirebaseFirestoreException? ->
-                if (e != null || snapshot == null) {
-                    crashlytics.recordException(e ?: Exception("Firestore Snapshot Fehler"))
-                    return@addSnapshotListener
-                }
+                if (e != null || snapshot == null) return@addSnapshotListener
                 
-                snapshot.documents.forEach { doc: DocumentSnapshot ->
-                    viewModelScope.launch {
-                        val id = doc.id
-                        val name = doc.getString("name") ?: ""
-                        val color = doc.getLong("color") ?: 0L
-                        val ownerId = doc.getString("ownerId")
-                        val allowedUsers = (doc.get("allowedUsers") as? List<*>)?.joinToString(",") ?: ""
-                        
-                        dao.insertCategory(CategoryEntity(
-                            id = id,
-                            name = name,
-                            color = color,
-                            storageType = StorageType.FIREBASE.name,
-                            remotePath = null,
-                            hideCheckedItems = false,
-                            ownerId = ownerId,
-                            allowedUsers = allowedUsers
-                        ))
+                snapshot.documentChanges.forEach { change ->
+                    val doc = change.document
+                    val id = doc.id
+                    when (change.type) {
+                        DocumentChange.Type.ADDED, DocumentChange.Type.MODIFIED -> {
+                            viewModelScope.launch {
+                                dao.insertCategory(CategoryEntity(
+                                    id = id,
+                                    name = doc.getString("name") ?: "",
+                                    color = doc.getLong("color") ?: 0L,
+                                    storageType = StorageType.FIREBASE.name,
+                                    remotePath = null,
+                                    hideCheckedItems = doc.getBoolean("hideCheckedItems") ?: false,
+                                    ownerId = doc.getString("ownerId"),
+                                    allowedUsers = (doc.get("allowedUsers") as? List<*>)?.joinToString(",") ?: ""
+                                ))
+                                syncListsForCategory(id)
+                            }
+                        }
+                        DocumentChange.Type.REMOVED -> {
+                            viewModelScope.launch { removeLocalCategory(id) }
+                        }
                     }
                 }
             }
+        activeListeners["categories"] = categoryListener
+    }
+
+    private suspend fun removeLocalCategory(categoryId: String) {
+        activeListeners["lists_$categoryId"]?.remove()
+        activeListeners.remove("lists_$categoryId")
+        lists.value.filter { it.categoryId == categoryId }.forEach { removeLocalList(it.id) }
+        dao.deleteCategory(categoryId)
+    }
+
+    private fun syncListsForCategory(categoryId: String) {
+        if (activeListeners.containsKey("lists_$categoryId")) return
+        
+        val listener = firestore.collection("shopping_lists")
+            .whereEqualTo("categoryId", categoryId)
+            .addSnapshotListener { snapshot, e ->
+                if (e != null || snapshot == null) return@addSnapshotListener
+                snapshot.documentChanges.forEach { change ->
+                    val id = change.document.id
+                    when (change.type) {
+                        DocumentChange.Type.ADDED, DocumentChange.Type.MODIFIED -> {
+                            viewModelScope.launch {
+                                dao.insertList(ShoppingListEntity(id = id, categoryId = categoryId, name = change.document.getString("name") ?: ""))
+                                syncItemsForList(id)
+                            }
+                        }
+                        DocumentChange.Type.REMOVED -> {
+                            viewModelScope.launch { removeLocalList(id) }
+                        }
+                    }
+                }
+            }
+        activeListeners["lists_$categoryId"] = listener
+    }
+
+    private suspend fun removeLocalList(listId: String) {
+        activeListeners["items_$listId"]?.remove()
+        activeListeners.remove("items_$listId")
+        dao.deleteItemsByList(listId)
+        dao.deleteList(listId)
+    }
+
+    private fun syncItemsForList(listId: String) {
+        if (activeListeners.containsKey("items_$listId")) return
+        
+        val listener = firestore.collection("list_items")
+            .whereEqualTo("listId", listId)
+            .addSnapshotListener { snapshot, e ->
+                if (e != null || snapshot == null) return@addSnapshotListener
+                snapshot.documentChanges.forEach { change ->
+                    val id = change.document.id
+                    when (change.type) {
+                        DocumentChange.Type.ADDED, DocumentChange.Type.MODIFIED -> {
+                            viewModelScope.launch {
+                                dao.insertItem(ListItemEntity(
+                                    id, listId, change.document.getString("text") ?: "",
+                                    change.document.getBoolean("isChecked") ?: false,
+                                    change.document.getLong("timestamp") ?: 0L
+                                ))
+                            }
+                        }
+                        DocumentChange.Type.REMOVED -> {
+                            viewModelScope.launch { dao.deleteItem(id) }
+                        }
+                    }
+                }
+            }
+        activeListeners["items_$listId"] = listener
     }
 
     fun addCategory(name: String, color: Long) {
@@ -181,51 +268,60 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             val id = java.util.UUID.randomUUID().toString()
             val ownerId = user?.uid
             val allowedUsers = ownerId?.let { listOf(it) } ?: emptyList()
-
-            val entity = CategoryEntity(
-                id = id,
-                name = name,
-                color = color,
-                storageType = if (user != null) StorageType.FIREBASE.name else StorageType.LOCAL.name,
-                remotePath = null,
-                hideCheckedItems = false,
-                ownerId = ownerId,
-                allowedUsers = allowedUsers.joinToString(",")
-            )
-            
-            dao.insertCategory(entity)
-
+            dao.insertCategory(CategoryEntity(id, name, color, if (user != null) StorageType.FIREBASE.name else StorageType.LOCAL.name, null, false, ownerId, allowedUsers.joinToString(",")))
             if (user != null) {
-                val data = hashMapOf(
-                    "name" to name,
-                    "color" to color,
-                    "ownerId" to ownerId,
-                    "allowedUsers" to allowedUsers
-                )
-                firestore.collection("categories").document(id).set(data).await()
+                firestore.collection("categories").document(id).set(hashMapOf("name" to name, "color" to color, "ownerId" to ownerId, "allowedUsers" to allowedUsers, "hideCheckedItems" to false)).await()
             }
-
-            if (_selectedCategoryId.value == null) {
-                _selectedCategoryId.value = id
-            }
+            selectCategory(id)
         }
     }
 
-    fun selectCategory(id: String) { _selectedCategoryId.value = id }
-    fun selectList(id: String) { _selectedListId.value = id }
+    fun deleteCategory(categoryId: String) {
+        viewModelScope.launch {
+            val user = auth.currentUser
+            val category = categories.value.find { it.id == categoryId } ?: return@launch
+            
+            if (user != null && category.settings.type == StorageType.FIREBASE) {
+                if (category.ownerId == user.uid) {
+                    firestore.collection("categories").document(categoryId).delete().await()
+                } else {
+                    firestore.collection("categories").document(categoryId).update("allowedUsers", FieldValue.arrayRemove(user.uid)).await()
+                }
+            }
+            removeLocalCategory(categoryId)
+            if (_selectedCategoryId.value == categoryId) selectCategory(null)
+            _uiEvent.emit(UiEvent.ShowToast("Kategorie entfernt."))
+        }
+    }
+
+    fun selectCategory(id: String?) {
+        _selectedCategoryId.value = id
+        _selectedListId.value = null
+    }
+
+    fun selectList(id: String?) { _selectedListId.value = id }
 
     fun addList(categoryId: String, name: String) {
         viewModelScope.launch {
             val id = java.util.UUID.randomUUID().toString()
             dao.insertList(ShoppingListEntity(id, categoryId, name))
-            
             val category = categories.value.find { it.id == categoryId }
             if (category?.settings?.type == StorageType.FIREBASE) {
-                firestore.collection("shopping_lists").document(id).set(hashMapOf(
-                    "categoryId" to categoryId,
-                    "name" to name
-                )).await()
+                firestore.collection("shopping_lists").document(id).set(hashMapOf("categoryId" to categoryId, "name" to name)).await()
             }
+            selectList(id)
+        }
+    }
+
+    fun deleteList(listId: String) {
+        viewModelScope.launch {
+            val list = lists.value.find { it.id == listId } ?: return@launch
+            val category = categories.value.find { it.id == list.categoryId }
+            if (auth.currentUser != null && category?.settings?.type == StorageType.FIREBASE) {
+                firestore.collection("shopping_lists").document(listId).delete().await()
+            }
+            removeLocalList(listId)
+            _uiEvent.emit(UiEvent.ShowToast("Liste gelöscht."))
         }
     }
 
@@ -234,16 +330,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             val id = java.util.UUID.randomUUID().toString()
             val timestamp = System.currentTimeMillis()
             dao.insertItem(ListItemEntity(id, listId, text, false, timestamp))
-
             val list = lists.value.find { it.id == listId }
             val category = categories.value.find { it.id == list?.categoryId }
             if (category?.settings?.type == StorageType.FIREBASE) {
-                firestore.collection("list_items").document(id).set(hashMapOf(
-                    "listId" to listId,
-                    "text" to text,
-                    "isChecked" to false,
-                    "timestamp" to timestamp
-                )).await()
+                firestore.collection("list_items").document(id).set(hashMapOf("listId" to listId, "text" to text, "isChecked" to false, "timestamp" to timestamp)).await()
             }
         }
     }
@@ -253,7 +343,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             val item = items.value.find { it.id == itemId } ?: return@launch
             val newChecked = !item.isChecked
             dao.updateItem(ListItemEntity(item.id, item.listId, item.text, newChecked, item.timestamp))
-
             val list = lists.value.find { it.id == item.listId }
             val category = categories.value.find { it.id == list?.categoryId }
             if (category?.settings?.type == StorageType.FIREBASE) {
@@ -266,13 +355,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             val checkedItems = items.value.filter { it.listId == listId && it.isChecked }
             dao.deleteCheckedItems(listId)
-
             val list = lists.value.find { it.id == listId }
             val category = categories.value.find { it.id == list?.categoryId }
             if (category?.settings?.type == StorageType.FIREBASE) {
-                checkedItems.forEach { 
-                    firestore.collection("list_items").document(it.id).delete().await()
-                }
+                checkedItems.forEach { firestore.collection("list_items").document(it.id).delete() }
             }
         }
     }
@@ -281,17 +367,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             val user = auth.currentUser ?: return@launch
             try {
-                val doc = firestore.collection("categories").document(inviteCode).get().await()
-                if (doc.exists()) {
-                    @Suppress("UNCHECKED_CAST")
-                    val allowedUsers = (doc.get("allowedUsers") as? List<String>)?.toMutableList() ?: mutableListOf()
-                    if (!allowedUsers.contains(user.uid)) {
-                        allowedUsers.add(user.uid)
-                        firestore.collection("categories").document(inviteCode).update("allowedUsers", allowedUsers).await()
-                    }
-                }
+                firestore.collection("categories").document(inviteCode).update("allowedUsers", FieldValue.arrayUnion(user.uid)).await()
+                _uiEvent.emit(UiEvent.ShowToast("Beitritt erfolgreich!"))
+                selectCategory(inviteCode)
             } catch (e: Exception) {
-                crashlytics.recordException(e)
+                _uiEvent.emit(UiEvent.ShowToast("Code ungültig oder Zugriff verweigert."))
             }
         }
     }
@@ -299,18 +379,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun updateCategorySettings(categoryId: String, hideChecked: Boolean, color: Long) {
         viewModelScope.launch {
             val current = categories.value.find { it.id == categoryId } ?: return@launch
-            dao.updateCategory(CategoryEntity(
-                id = categoryId,
-                name = current.name,
-                color = color,
-                storageType = current.settings.type.name,
-                remotePath = null,
-                hideCheckedItems = hideChecked,
-                ownerId = current.ownerId,
-                allowedUsers = current.allowedUsers.joinToString(",")
-            ))
+            dao.updateCategory(CategoryEntity(id = categoryId, name = current.name, color = color, storageType = current.settings.type.name, remotePath = null, hideCheckedItems = hideChecked, ownerId = current.ownerId, allowedUsers = current.allowedUsers.joinToString(",")))
             if (current.settings.type == StorageType.FIREBASE) {
-                firestore.collection("categories").document(categoryId).update("color", color).await()
+                firestore.collection("categories").document(categoryId).update(
+                    "color", color,
+                    "hideCheckedItems", hideChecked
+                ).await()
             }
         }
     }
