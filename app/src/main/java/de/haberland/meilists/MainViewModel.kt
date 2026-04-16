@@ -5,9 +5,6 @@ import android.util.Log
 import androidx.credentials.ClearCredentialStateRequest
 import androidx.credentials.CredentialManager
 import androidx.credentials.GetCredentialRequest
-import androidx.credentials.exceptions.GetCredentialCancellationException
-import androidx.credentials.exceptions.GetCredentialException
-import androidx.credentials.exceptions.NoCredentialException
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.google.android.libraries.identity.googleid.GetGoogleIdOption
@@ -24,7 +21,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
 
 sealed class UiEvent {
-    data class ShowToast(val message: String) : UiEvent()
+    data object ShowToast : UiEvent()
 }
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
@@ -37,7 +34,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val activeListeners = mutableMapOf<String, ListenerRegistration>()
     
     private val _uiEvent = MutableSharedFlow<UiEvent>()
-    val uiEvent = _uiEvent.asSharedFlow()
 
     val currentUser: StateFlow<FirebaseUser?> = callbackFlow {
         val listener = FirebaseAuth.AuthStateListener { firebaseAuth ->
@@ -142,7 +138,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     val googleIdTokenCredential = GoogleIdTokenCredential.createFrom(credential.data)
                     val firebaseCredential = GoogleAuthProvider.getCredential(googleIdTokenCredential.idToken, null)
                     auth.signInWithCredential(firebaseCredential).await()
-                    _uiEvent.emit(UiEvent.ShowToast("Anmeldung erfolgreich!"))
+                    _uiEvent.emit(UiEvent.ShowToast)
                 }
             } catch (e: Exception) {
                 Log.e("MeiLists", "Login Fehler: ${e.message}")
@@ -155,7 +151,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             auth.signOut()
             credentialManager.clearCredentialState(ClearCredentialStateRequest())
             clearAllListeners()
-            _uiEvent.emit(UiEvent.ShowToast("Abgemeldet."))
+            _uiEvent.emit(UiEvent.ShowToast)
         }
     }
 
@@ -290,7 +286,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
             removeLocalCategory(categoryId)
             if (_selectedCategoryId.value == categoryId) selectCategory(null)
-            _uiEvent.emit(UiEvent.ShowToast("Kategorie entfernt."))
+            _uiEvent.emit(UiEvent.ShowToast)
         }
     }
 
@@ -300,30 +296,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun selectList(id: String?) { _selectedListId.value = id }
-
-    fun addList(categoryId: String, name: String) {
-        viewModelScope.launch {
-            val id = java.util.UUID.randomUUID().toString()
-            dao.insertList(ShoppingListEntity(id, categoryId, name))
-            val category = categories.value.find { it.id == categoryId }
-            if (category?.settings?.type == StorageType.FIREBASE) {
-                firestore.collection("shopping_lists").document(id).set(hashMapOf("categoryId" to categoryId, "name" to name)).await()
-            }
-            selectList(id)
-        }
-    }
-
-    fun deleteList(listId: String) {
-        viewModelScope.launch {
-            val list = lists.value.find { it.id == listId } ?: return@launch
-            val category = categories.value.find { it.id == list.categoryId }
-            if (auth.currentUser != null && category?.settings?.type == StorageType.FIREBASE) {
-                firestore.collection("shopping_lists").document(listId).delete().await()
-            }
-            removeLocalList(listId)
-            _uiEvent.emit(UiEvent.ShowToast("Liste gelöscht."))
-        }
-    }
 
     fun addItem(listId: String, text: String) {
         viewModelScope.launch {
@@ -368,10 +340,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             val user = auth.currentUser ?: return@launch
             try {
                 firestore.collection("categories").document(inviteCode).update("allowedUsers", FieldValue.arrayUnion(user.uid)).await()
-                _uiEvent.emit(UiEvent.ShowToast("Beitritt erfolgreich!"))
+                _uiEvent.emit(UiEvent.ShowToast)
                 selectCategory(inviteCode)
             } catch (e: Exception) {
-                _uiEvent.emit(UiEvent.ShowToast("Code ungültig oder Zugriff verweigert."))
+                Log.e("MeiLists", "Join Fehler: ${e.message}")
+                _uiEvent.emit(UiEvent.ShowToast)
             }
         }
     }
@@ -386,6 +359,30 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     "hideCheckedItems", hideChecked
                 ).await()
             }
+        }
+    }
+
+    fun addList(categoryId: String, name: String) {
+        viewModelScope.launch {
+            val id = java.util.UUID.randomUUID().toString()
+            dao.insertList(ShoppingListEntity(id, categoryId, name))
+            val category = categories.value.find { it.id == categoryId }
+            if (category?.settings?.type == StorageType.FIREBASE) {
+                firestore.collection("shopping_lists").document(id).set(hashMapOf("categoryId" to categoryId, "name" to name)).await()
+            }
+            selectList(id)
+        }
+    }
+
+    fun deleteList(listId: String) {
+        viewModelScope.launch {
+            val list = lists.value.find { it.id == listId } ?: return@launch
+            val category = categories.value.find { it.id == list.categoryId }
+            if (auth.currentUser != null && category?.settings?.type == StorageType.FIREBASE) {
+                firestore.collection("shopping_lists").document(listId).delete().await()
+            }
+            removeLocalList(listId)
+            _uiEvent.emit(UiEvent.ShowToast)
         }
     }
 }
