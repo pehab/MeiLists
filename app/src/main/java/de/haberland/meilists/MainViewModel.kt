@@ -9,6 +9,10 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.google.android.libraries.identity.googleid.GetGoogleIdOption
 import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential
+import com.google.android.play.core.appupdate.AppUpdateInfo
+import com.google.android.play.core.appupdate.AppUpdateManagerFactory
+import com.google.android.play.core.install.model.AppUpdateType
+import com.google.android.play.core.install.model.UpdateAvailability
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.auth.FirebaseUser
 import com.google.firebase.auth.GoogleAuthProvider
@@ -22,6 +26,7 @@ import kotlinx.coroutines.tasks.await
 
 sealed class UiEvent {
     data object ShowToast : UiEvent()
+    data class UpdateAvailable(val info: AppUpdateInfo) : UiEvent()
 }
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
@@ -30,10 +35,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val firestore = FirebaseFirestore.getInstance()
     private val credentialManager = CredentialManager.create(application)
     private val crashlytics = FirebaseCrashlytics.getInstance()
+    private val appUpdateManager = AppUpdateManagerFactory.create(application)
 
     private val activeListeners = mutableMapOf<String, ListenerRegistration>()
-    
+
     private val _uiEvent = MutableSharedFlow<UiEvent>()
+    val uiEvent = _uiEvent.asSharedFlow()
 
     val currentUser: StateFlow<FirebaseUser?> = callbackFlow {
         val listener = FirebaseAuth.AuthStateListener { firebaseAuth ->
@@ -68,7 +75,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     val lists: StateFlow<List<ShoppingList>> = dao.getAllLists()
         .map { entities ->
-            entities.map { ShoppingList(it.id, it.categoryId, it.name) }
+            entities.map { ShoppingList(it.id, it.categoryId, it.name, it.sortByArea) }
         }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     private val _selectedListId = MutableStateFlow<String?>(null)
@@ -76,7 +83,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     val items: StateFlow<List<ListItem>> = dao.getAllItems()
         .map { entities ->
-            entities.map { ListItem(it.id, it.listId, it.text, it.isChecked, it.timestamp) }
+            entities.map { ListItem(it.id, it.listId, it.text, it.isChecked, it.timestamp, it.area) }
         }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     init {
@@ -108,6 +115,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 if (_selectedCategoryId.value == null && it.isNotEmpty()) {
                     selectCategory(it.first().id)
                 }
+            }
+        }
+
+        checkForUpdates()
+    }
+
+    private fun checkForUpdates() {
+        appUpdateManager.appUpdateInfo.addOnSuccessListener { info ->
+            if (info.updateAvailability() == UpdateAvailability.UPDATE_AVAILABLE && 
+                info.isUpdateTypeAllowed(AppUpdateType.IMMEDIATE)) {
+                viewModelScope.launch { _uiEvent.emit(UiEvent.UpdateAvailable(info)) }
             }
         }
     }
@@ -207,10 +225,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 if (e != null || snapshot == null) return@addSnapshotListener
                 snapshot.documentChanges.forEach { change ->
                     val id = change.document.id
+                    val doc = change.document
                     when (change.type) {
                         DocumentChange.Type.ADDED, DocumentChange.Type.MODIFIED -> {
                             viewModelScope.launch {
-                                dao.insertList(ShoppingListEntity(id = id, categoryId = categoryId, name = change.document.getString("name") ?: ""))
+                                dao.insertList(ShoppingListEntity(
+                                    id = id, 
+                                    categoryId = categoryId, 
+                                    name = doc.getString("name") ?: "",
+                                    sortByArea = doc.getBoolean("sortByArea") ?: false
+                                ))
                                 syncItemsForList(id)
                             }
                         }
@@ -239,13 +263,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 if (e != null || snapshot == null) return@addSnapshotListener
                 snapshot.documentChanges.forEach { change ->
                     val id = change.document.id
+                    val doc = change.document
                     when (change.type) {
                         DocumentChange.Type.ADDED, DocumentChange.Type.MODIFIED -> {
                             viewModelScope.launch {
                                 dao.insertItem(ListItemEntity(
-                                    id, listId, change.document.getString("text") ?: "",
-                                    change.document.getBoolean("isChecked") ?: false,
-                                    change.document.getLong("timestamp") ?: 0L
+                                    id = id, 
+                                    listId = listId, 
+                                    text = doc.getString("text") ?: "",
+                                    isChecked = doc.getBoolean("isChecked") ?: false,
+                                    timestamp = doc.getLong("timestamp") ?: 0L,
+                                    area = doc.getString("area")
                                 ))
                             }
                         }
@@ -297,15 +325,21 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun selectList(id: String?) { _selectedListId.value = id }
 
-    fun addItem(listId: String, text: String) {
+    fun addItem(listId: String, text: String, area: String? = null) {
         viewModelScope.launch {
             val id = java.util.UUID.randomUUID().toString()
             val timestamp = System.currentTimeMillis()
-            dao.insertItem(ListItemEntity(id, listId, text, false, timestamp))
+            dao.insertItem(ListItemEntity(id, listId, text, false, timestamp, area))
             val list = lists.value.find { it.id == listId }
             val category = categories.value.find { it.id == list?.categoryId }
             if (category?.settings?.type == StorageType.FIREBASE) {
-                firestore.collection("list_items").document(id).set(hashMapOf("listId" to listId, "text" to text, "isChecked" to false, "timestamp" to timestamp)).await()
+                firestore.collection("list_items").document(id).set(hashMapOf(
+                    "listId" to listId, 
+                    "text" to text, 
+                    "isChecked" to false, 
+                    "timestamp" to timestamp,
+                    "area" to area
+                )).await()
             }
         }
     }
@@ -314,11 +348,38 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             val item = items.value.find { it.id == itemId } ?: return@launch
             val newChecked = !item.isChecked
-            dao.updateItem(ListItemEntity(item.id, item.listId, item.text, newChecked, item.timestamp))
+            dao.updateItem(ListItemEntity(item.id, item.listId, item.text, newChecked, item.timestamp, item.area))
             val list = lists.value.find { it.id == item.listId }
             val category = categories.value.find { it.id == list?.categoryId }
             if (category?.settings?.type == StorageType.FIREBASE) {
                 firestore.collection("list_items").document(itemId).update("isChecked", newChecked).await()
+            }
+        }
+    }
+
+    fun updateItem(itemId: String, newText: String, newArea: String?) {
+        viewModelScope.launch {
+            val item = items.value.find { it.id == itemId } ?: return@launch
+            dao.updateItem(ListItemEntity(item.id, item.listId, newText, item.isChecked, item.timestamp, newArea))
+            val list = lists.value.find { it.id == item.listId }
+            val category = categories.value.find { it.id == list?.categoryId }
+            if (category?.settings?.type == StorageType.FIREBASE) {
+                firestore.collection("list_items").document(itemId).update(mapOf(
+                    "text" to newText,
+                    "area" to newArea
+                )).await()
+            }
+        }
+    }
+
+    fun deleteItem(itemId: String) {
+        viewModelScope.launch {
+            val item = items.value.find { it.id == itemId } ?: return@launch
+            dao.deleteItem(itemId)
+            val list = lists.value.find { it.id == item.listId }
+            val category = categories.value.find { it.id == list?.categoryId }
+            if (category?.settings?.type == StorageType.FIREBASE) {
+                firestore.collection("list_items").document(itemId).delete().await()
             }
         }
     }
@@ -368,9 +429,36 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             dao.insertList(ShoppingListEntity(id, categoryId, name))
             val category = categories.value.find { it.id == categoryId }
             if (category?.settings?.type == StorageType.FIREBASE) {
-                firestore.collection("shopping_lists").document(id).set(hashMapOf("categoryId" to categoryId, "name" to name)).await()
+                firestore.collection("shopping_lists").document(id).set(hashMapOf(
+                    "categoryId" to categoryId, 
+                    "name" to name,
+                    "sortByArea" to false
+                )).await()
             }
             selectList(id)
+        }
+    }
+
+    fun renameList(listId: String, newName: String) {
+        viewModelScope.launch {
+            val list = lists.value.find { it.id == listId } ?: return@launch
+            val category = categories.value.find { it.id == list.categoryId }
+            dao.insertList(ShoppingListEntity(id = listId, categoryId = list.categoryId, name = newName, sortByArea = list.sortByArea))
+            if (category?.settings?.type == StorageType.FIREBASE) {
+                firestore.collection("shopping_lists").document(listId).update("name", newName).await()
+            }
+        }
+    }
+
+    fun toggleSortByArea(listId: String) {
+        viewModelScope.launch {
+            val list = lists.value.find { it.id == listId } ?: return@launch
+            val newValue = !list.sortByArea
+            dao.insertList(ShoppingListEntity(id = listId, categoryId = list.categoryId, name = list.name, sortByArea = newValue))
+            val category = categories.value.find { it.id == list.categoryId }
+            if (category?.settings?.type == StorageType.FIREBASE) {
+                firestore.collection("shopping_lists").document(listId).update("sortByArea", newValue).await()
+            }
         }
     }
 

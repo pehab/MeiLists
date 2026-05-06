@@ -2,7 +2,9 @@
 
 package de.haberland.meilists
 
+import android.app.Activity
 import android.os.Bundle
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -13,6 +15,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.*
 import androidx.compose.material.icons.filled.*
@@ -26,9 +29,13 @@ import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.google.android.play.core.appupdate.AppUpdateManagerFactory
+import com.google.android.play.core.install.model.AppUpdateType
 import de.haberland.meilists.model.Category
 import de.haberland.meilists.model.ListItem
 import de.haberland.meilists.ui.theme.MeiListsTheme
@@ -62,14 +69,54 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
     var showAddDialog by remember { mutableStateOf<AddType?>(null) }
     var showSettingsDialog by remember { mutableStateOf<Category?>(null) }
     var showJoinDialog by remember { mutableStateOf(false) }
+    var showListMenu by remember { mutableStateOf(false) }
+    var showDeleteListConfirm by remember { mutableStateOf(false) }
+    var showRenameListDialog by remember { mutableStateOf(false) }
+    var editingItem by remember { mutableStateOf<ListItem?>(null) }
 
     val currentCategory = categories.find { it.id == selectedCategoryId }
     val categoryLists = lists.filter { it.categoryId == selectedCategoryId }
+    val currentList = categoryLists.find { it.id == selectedListId }
     
     val filteredAndSortedItems = items
         .filter { it.listId == selectedListId }
         .filter { !it.isChecked || !(currentCategory?.settings?.hideCheckedItems ?: false) }
-        .sortedWith(compareBy<ListItem> { it.isChecked }.thenByDescending { it.timestamp })
+        .sortedWith { a, b ->
+            // 1. Nach Status (offen vor erledigt)
+            if (a.isChecked != b.isChecked) return@sortedWith a.isChecked.compareTo(b.isChecked)
+            
+            // 2. Optional nach Bereich sortieren
+            if (currentList?.sortByArea == true) {
+                val areaA = a.area ?: ""
+                val areaB = b.area ?: ""
+                if (areaA != areaB) {
+                    if (areaA.isEmpty()) return@sortedWith 1
+                    if (areaB.isEmpty()) return@sortedWith -1
+                    return@sortedWith areaA.compareTo(areaB)
+                }
+            }
+            
+            // 3. Nach Zeitstempel (neuere zuerst)
+            b.timestamp.compareTo(a.timestamp)
+        }
+
+    // Update-Check und UI-Events verarbeiten
+    LaunchedEffect(Unit) {
+        viewModel.uiEvent.collect { event ->
+            when (event) {
+                is UiEvent.ShowToast -> Toast.makeText(context, "Aktion ausgeführt", Toast.LENGTH_SHORT).show()
+                is UiEvent.UpdateAvailable -> {
+                    val appUpdateManager = AppUpdateManagerFactory.create(context)
+                    appUpdateManager.startUpdateFlowForResult(
+                        event.info,
+                        AppUpdateType.IMMEDIATE,
+                        context as Activity,
+                        1001
+                    )
+                }
+            }
+        }
+    }
 
     ModalNavigationDrawer(
         drawerState = drawerState,
@@ -90,7 +137,8 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
                         )
                         Spacer(modifier = Modifier.height(12.dp))
                         
-                        if (currentUser == null) {
+                        val user = currentUser
+                        if (user == null) {
                             Button(
                                 onClick = { viewModel.signInWithGoogle(context) },
                                 modifier = Modifier.fillMaxWidth()
@@ -104,7 +152,6 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
                                 verticalAlignment = Alignment.CenterVertically,
                                 modifier = Modifier.fillMaxWidth()
                             ) {
-                                // Kreis mit Initialen
                                 Box(
                                     modifier = Modifier
                                         .size(48.dp)
@@ -113,7 +160,7 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
                                     contentAlignment = Alignment.Center
                                 ) {
                                     Text(
-                                        text = currentUser?.email?.take(1)?.uppercase() ?: "U",
+                                        text = user.email?.take(1)?.uppercase() ?: "U",
                                         color = MaterialTheme.colorScheme.onPrimary,
                                         style = MaterialTheme.typography.headlineSmall
                                     )
@@ -123,13 +170,13 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
                                 
                                 Column(modifier = Modifier.weight(1f)) {
                                     Text(
-                                        text = currentUser?.displayName ?: "Benutzer",
+                                        text = user.displayName ?: "Benutzer",
                                         style = MaterialTheme.typography.titleMedium,
                                         maxLines = 1,
                                         overflow = TextOverflow.Ellipsis
                                     )
                                     Text(
-                                        text = currentUser?.email ?: "",
+                                        text = user.email ?: "",
                                         style = MaterialTheme.typography.bodySmall,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                                         maxLines = 1,
@@ -199,6 +246,15 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
                     icon = { Icon(Icons.Default.GroupAdd, contentDescription = null) },
                     modifier = Modifier.padding(NavigationDrawerItemDefaults.ItemPadding)
                 )
+
+                // Versionsnummer ganz unten
+                Spacer(modifier = Modifier.weight(1f))
+                Text(
+                    text = "Version ${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})",
+                    modifier = Modifier.padding(16.dp),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
             }
         }
     ) {
@@ -212,13 +268,61 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
                         }
                     },
                     actions = {
-                        if (selectedListId != null) {
-                            IconButton(onClick = { viewModel.deleteList(selectedListId!!) }) {
-                                Icon(Icons.Default.DeleteForever, contentDescription = "Liste löschen", tint = MaterialTheme.colorScheme.error)
+                        selectedListId?.let { listId ->
+                            if (items.any { it.listId == listId && it.isChecked }) {
+                                IconButton(onClick = { viewModel.deleteCheckedItems(listId) }) {
+                                    Icon(Icons.Default.DeleteSweep, contentDescription = "Erledigte löschen")
+                                }
                             }
-                            if (items.any { it.listId == selectedListId && it.isChecked }) {
-                                IconButton(onClick = { viewModel.deleteCheckedItems(selectedListId!!) }) {
-                                    Icon(Icons.Default.Delete, contentDescription = "Erledigte löschen")
+                            
+                            Box {
+                                IconButton(onClick = { showListMenu = true }) {
+                                    Icon(Icons.Default.MoreVert, contentDescription = "Mehr")
+                                }
+                                DropdownMenu(
+                                    expanded = showListMenu,
+                                    onDismissRequest = { showListMenu = false }
+                                ) {
+                                    DropdownMenuItem(
+                                        text = { Text("Liste umbenennen") },
+                                        onClick = {
+                                            showListMenu = false
+                                            showRenameListDialog = true
+                                        },
+                                        leadingIcon = { Icon(Icons.Default.Edit, contentDescription = null) }
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text("Nach Bereich sortieren") },
+                                        onClick = {
+                                            showListMenu = false
+                                            viewModel.toggleSortByArea(listId)
+                                        },
+                                        leadingIcon = { 
+                                            Icon(
+                                                if (currentList?.sortByArea == true) Icons.Default.CheckCircle else Icons.AutoMirrored.Filled.Sort,
+                                                contentDescription = null,
+                                                tint = if (currentList?.sortByArea == true) MaterialTheme.colorScheme.primary else LocalContentColor.current
+                                            ) 
+                                        }
+                                    )
+                                    HorizontalDivider()
+                                    DropdownMenuItem(
+                                        text = { Text("Liste löschen") },
+                                        onClick = {
+                                            showListMenu = false
+                                            showDeleteListConfirm = true
+                                        },
+                                        leadingIcon = { 
+                                            Icon(
+                                                Icons.Default.DeleteForever, 
+                                                contentDescription = null, 
+                                                tint = MaterialTheme.colorScheme.error
+                                            ) 
+                                        },
+                                        colors = MenuDefaults.itemColors(
+                                            textColor = MaterialTheme.colorScheme.error
+                                        )
+                                    )
                                 }
                             }
                         }
@@ -274,7 +378,9 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
                         items(filteredAndSortedItems, key = { it.id }) { item ->
                             ListItemRow(
                                 item = item,
-                                onCheckedChange = { viewModel.toggleItem(item.id) }
+                                onCheckedChange = { viewModel.toggleItem(item.id) },
+                                onEditClick = { editingItem = item },
+                                onDeleteClick = { viewModel.deleteItem(item.id) }
                             )
                         }
                     }
@@ -292,11 +398,11 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
         AddEntryDialog(
             type = type,
             onDismiss = { showAddDialog = null },
-            onConfirm = { name, color ->
+            onConfirm = { name, color, area ->
                 when (type) {
                     AddType.CATEGORY -> viewModel.addCategory(name, color?.toArgb()?.toLong() ?: 0xFF6200EE)
                     AddType.LIST -> selectedCategoryId?.let { viewModel.addList(it, name) }
-                    AddType.ITEM -> selectedListId?.let { viewModel.addItem(it, name) }
+                    AddType.ITEM -> selectedListId?.let { viewModel.addItem(it, name, area) }
                 }
                 showAddDialog = null
             }
@@ -318,6 +424,95 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
         )
     }
 
+    if (showDeleteListConfirm) {
+        val listToDelete = categoryLists.find { it.id == selectedListId }
+        AlertDialog(
+            onDismissRequest = { showDeleteListConfirm = false },
+            title = { Text("Liste löschen?") },
+            text = { Text("Möchtest du die Liste '${listToDelete?.name}' wirklich löschen?") },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        selectedListId?.let { viewModel.deleteList(it) }
+                        showDeleteListConfirm = false
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+                ) { Text("Löschen") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDeleteListConfirm = false }) { Text("Abbrechen") }
+            }
+        )
+    }
+
+    if (showRenameListDialog) {
+        val listToRename = categoryLists.find { it.id == selectedListId }
+        var newName by remember { mutableStateOf(listToRename?.name ?: "") }
+        AlertDialog(
+            onDismissRequest = { showRenameListDialog = false },
+            title = { Text("Liste umbenennen") },
+            text = {
+                OutlinedTextField(
+                    value = newName,
+                    onValueChange = { newName = it },
+                    label = { Text("Neuer Name") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            },
+            confirmButton = {
+                Button(onClick = {
+                    if (newName.isNotBlank()) {
+                        selectedListId?.let { viewModel.renameList(it, newName) }
+                        showRenameListDialog = false
+                    }
+                }) { Text("Speichern") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showRenameListDialog = false }) { Text("Abbrechen") }
+            }
+        )
+    }
+
+    editingItem?.let { item ->
+        var text by remember { mutableStateOf(item.text) }
+        var area by remember { mutableStateOf(item.area ?: "") }
+        AlertDialog(
+            onDismissRequest = { editingItem = null },
+            title = { Text("Eintrag bearbeiten") },
+            text = {
+                Column {
+                    OutlinedTextField(
+                        value = text,
+                        onValueChange = { text = it },
+                        label = { Text("Bezeichnung") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    OutlinedTextField(
+                        value = area,
+                        onValueChange = { area = it },
+                        label = { Text("Bereich (optional, z.B. Obst)") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+            },
+            confirmButton = {
+                Button(onClick = {
+                    if (text.isNotBlank()) {
+                        viewModel.updateItem(item.id, text, area.ifBlank { null })
+                        editingItem = null
+                    }
+                }) { Text("Speichern") }
+            },
+            dismissButton = {
+                TextButton(onClick = { editingItem = null }) { Text("Abbrechen") }
+            }
+        )
+    }
+
     if (showJoinDialog) {
         JoinCategoryDialog(
             onDismiss = { showJoinDialog = false },
@@ -330,30 +525,61 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
 }
 
 @Composable
-fun ListItemRow(item: ListItem, onCheckedChange: (Boolean) -> Unit) {
+fun ListItemRow(
+    item: ListItem, 
+    onCheckedChange: (Boolean) -> Unit,
+    onEditClick: () -> Unit,
+    onDeleteClick: () -> Unit
+) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .clickable { onCheckedChange(!item.isChecked) }
-            .padding(horizontal = 16.dp, vertical = 8.dp),
+            .padding(horizontal = 8.dp, vertical = 4.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Checkbox(checked = item.isChecked, onCheckedChange = onCheckedChange)
-        Spacer(modifier = Modifier.width(8.dp))
-        Text(
-            text = item.text,
-            style = MaterialTheme.typography.bodyLarge,
-            textDecoration = if (item.isChecked) androidx.compose.ui.text.style.TextDecoration.LineThrough else null,
-            color = if (item.isChecked) MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f) else MaterialTheme.colorScheme.onSurface
-        )
+        Spacer(modifier = Modifier.width(4.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = item.text,
+                style = MaterialTheme.typography.bodyLarge,
+                textDecoration = if (item.isChecked) androidx.compose.ui.text.style.TextDecoration.LineThrough else null,
+                color = if (item.isChecked) MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f) else MaterialTheme.colorScheme.onSurface
+            )
+            if (!item.area.isNullOrBlank()) {
+                Surface(
+                    color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = if (item.isChecked) 0.3f else 1f),
+                    shape = RoundedCornerShape(4.dp),
+                    modifier = Modifier.padding(top = 2.dp)
+                ) {
+                    Text(
+                        text = item.area,
+                        modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp),
+                        style = MaterialTheme.typography.labelSmall.copy(
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Bold
+                        ),
+                        color = MaterialTheme.colorScheme.onSecondaryContainer
+                    )
+                }
+            }
+        }
+        IconButton(onClick = onEditClick) {
+            Icon(Icons.Default.Edit, contentDescription = "Bearbeiten", modifier = Modifier.size(20.dp), tint = MaterialTheme.colorScheme.primary)
+        }
+        IconButton(onClick = onDeleteClick) {
+            Icon(Icons.Default.Delete, contentDescription = "Löschen", modifier = Modifier.size(20.dp), tint = MaterialTheme.colorScheme.error.copy(alpha = 0.7f))
+        }
     }
 }
 
 enum class AddType { CATEGORY, LIST, ITEM }
 
 @Composable
-fun AddEntryDialog(type: AddType, onDismiss: () -> Unit, onConfirm: (String, Color?) -> Unit) {
+fun AddEntryDialog(type: AddType, onDismiss: () -> Unit, onConfirm: (String, Color?, String?) -> Unit) {
     var text by remember { mutableStateOf("") }
+    var area by remember { mutableStateOf("") }
     var selectedColor by remember { mutableStateOf(Color(0xFF6200EE)) }
 
     AlertDialog(
@@ -372,6 +598,16 @@ fun AddEntryDialog(type: AddType, onDismiss: () -> Unit, onConfirm: (String, Col
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
                 )
+                if (type == AddType.ITEM) {
+                    Spacer(Modifier.height(8.dp))
+                    OutlinedTextField(
+                        value = area,
+                        onValueChange = { area = it },
+                        label = { Text("Bereich (optional, z.B. Tiefkühl)") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
                 if (type == AddType.CATEGORY) {
                     Spacer(Modifier.height(16.dp))
                     Text("Farbe wählen", style = MaterialTheme.typography.labelMedium)
@@ -380,7 +616,11 @@ fun AddEntryDialog(type: AddType, onDismiss: () -> Unit, onConfirm: (String, Col
             }
         },
         confirmButton = {
-            Button(onClick = { if (text.isNotBlank()) onConfirm(text, if (type == AddType.CATEGORY) selectedColor else null) }) {
+            Button(onClick = { 
+                if (text.isNotBlank()) {
+                    onConfirm(text, if (type == AddType.CATEGORY) selectedColor else null, area.ifBlank { null })
+                }
+            }) {
                 Text("Hinzufügen")
             }
         },

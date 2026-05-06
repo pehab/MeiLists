@@ -24,7 +24,8 @@ data class Category(
 data class ShoppingList(
     val id: String = UUID.randomUUID().toString(),
     val categoryId: String,
-    val name: String
+    val name: String,
+    val sortByArea: Boolean = false
 )
 
 data class ListItem(
@@ -32,5 +33,6 @@ data class ListItem(
     val listId: String,
     val text: String,
     val isChecked: Boolean = false,
-    val timestamp: Long = System.currentTimeMillis()
+    val timestamp: Long = System.currentTimeMillis(),
+    val area: String? = null
 )

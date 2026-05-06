@@ -15,8 +15,8 @@ android {
         applicationId = "de.haberland.meilists"
         minSdk = 26
         targetSdk = 35
-        versionCode = 2
-        versionName = "First Release candidate"
+        versionCode = 3
+        versionName = "0.1.1"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -45,6 +45,7 @@ android {
 
     buildFeatures {
         compose = true
+        buildConfig = true
     }
 
     packaging {
@@ -82,6 +83,9 @@ dependencies {
     implementation(libs.androidx.credentials)
     implementation(libs.androidx.credentials.play.services.auth)
     implementation(libs.googleid)
+
+    // Play In-App Updates
+    implementation(libs.play.app.update)
 
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)

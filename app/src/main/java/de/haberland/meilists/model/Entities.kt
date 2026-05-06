@@ -19,7 +19,8 @@ data class CategoryEntity(
 data class ShoppingListEntity(
     @PrimaryKey val id: String,
     val categoryId: String,
-    val name: String
+    val name: String,
+    val sortByArea: Boolean = false
 )
 
 @Entity(tableName = "list_items")
@@ -28,5 +29,6 @@ data class ListItemEntity(
     val listId: String,
     val text: String,
     val isChecked: Boolean,
-    val timestamp: Long
+    val timestamp: Long,
+    val area: String? = null
 )
