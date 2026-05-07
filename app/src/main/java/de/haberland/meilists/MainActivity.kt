@@ -14,8 +14,10 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.*
 import androidx.compose.material.icons.filled.*
@@ -35,6 +37,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.DialogProperties
+import androidx.compose.ui.window.PopupProperties
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.google.android.play.core.appupdate.AppUpdateManagerFactory
 import com.google.android.play.core.install.model.AppUpdateType
@@ -63,6 +67,8 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
     val lists by viewModel.lists.collectAsState()
     val selectedListId by viewModel.selectedListId.collectAsState()
     val items by viewModel.items.collectAsState()
+    val catalogAreas by viewModel.catalogAreas.collectAsState()
+    val catalogProducts by viewModel.catalogProducts.collectAsState()
     val currentUser by viewModel.currentUser.collectAsState()
 
     val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
@@ -403,14 +409,17 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
         AddEntryDialog(
             type = type,
             onDismiss = { showAddDialog = null },
-            onConfirm = { name, color, area ->
+            onConfirm = { name, color, area, importId, impA, impP ->
                 when (type) {
-                    AddType.CATEGORY -> viewModel.addCategory(name, color?.toArgb()?.toLong() ?: 0xFF6200EE)
+                    AddType.CATEGORY -> viewModel.addCategory(name, color?.toArgb()?.toLong() ?: 0xFF6200EE, importId, impA, impP)
                     AddType.LIST -> selectedCategoryId?.let { viewModel.addList(it, name) }
                     AddType.ITEM -> effectiveListId?.let { viewModel.addItem(it, name, area) }
                 }
                 showAddDialog = null
-            }
+            },
+            catalogProducts = catalogProducts,
+            catalogAreas = catalogAreas,
+            allCategories = categories
         )
     }
 
@@ -425,7 +434,9 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
             onDelete = {
                 viewModel.deleteCategory(category.id)
                 showSettingsDialog = null
-            }
+            },
+            viewModel = viewModel,
+            allCategories = categories
         )
     }
 
@@ -582,12 +593,36 @@ fun ListItemRow(
 enum class AddType { CATEGORY, LIST, ITEM }
 
 @Composable
-fun AddEntryDialog(type: AddType, onDismiss: () -> Unit, onConfirm: (String, Color?, String?) -> Unit) {
+fun AddEntryDialog(
+    type: AddType, 
+    onDismiss: () -> Unit, 
+    onConfirm: (String, Color?, String?, String?, Boolean, Boolean) -> Unit, 
+    catalogProducts: List<de.haberland.meilists.model.CatalogProduct> = emptyList(),
+    catalogAreas: List<de.haberland.meilists.model.CatalogArea> = emptyList(),
+    allCategories: List<de.haberland.meilists.model.Category> = emptyList()
+) {
     var text by remember { mutableStateOf("") }
     var area by remember { mutableStateOf("") }
     var selectedColor by remember { mutableStateOf(Color(0xFF6200EE)) }
     
+    // Import-Status
+    var importSource by remember { mutableStateOf<Category?>(null) }
+    var impAreas by remember { mutableStateOf(true) }
+    var impProducts by remember { mutableStateOf(true) }
+    var sourceExpanded by remember { mutableStateOf(false) }
+
     val focusRequester = remember { FocusRequester() }
+    var areaExpanded by remember { mutableStateOf(false) }
+
+    // Vorschlagslogik für Produkte
+    val suggestions = if (type == AddType.ITEM && text.isNotBlank()) {
+        catalogProducts.filter { it.name.contains(text, ignoreCase = true) && it.name != text }.take(5)
+    } else emptyList()
+
+    // Vorschlagslogik für Bereiche
+    val areaSuggestions = if (type == AddType.ITEM && area.isNotBlank()) {
+        catalogAreas.filter { it.name.contains(area, ignoreCase = true) && it.name != area }.take(3)
+    } else emptyList()
 
     LaunchedEffect(Unit) {
         focusRequester.requestFocus()
@@ -601,7 +636,7 @@ fun AddEntryDialog(type: AddType, onDismiss: () -> Unit, onConfirm: (String, Col
             AddType.ITEM -> "Eintrag hinzufügen"
         }) },
         text = {
-            Column {
+            Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
                 OutlinedTextField(
                     value = text,
                     onValueChange = { text = it },
@@ -611,27 +646,127 @@ fun AddEntryDialog(type: AddType, onDismiss: () -> Unit, onConfirm: (String, Col
                         .fillMaxWidth()
                         .focusRequester(focusRequester)
                 )
+                
+                if (suggestions.isNotEmpty()) {
+                    Card(
+                        modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+                        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+                    ) {
+                        Column {
+                            suggestions.forEach { product ->
+                                Text(
+                                    text = product.name + (product.defaultArea?.let { " ($it)" } ?: ""),
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clickable { 
+                                            text = product.name
+                                            if (product.defaultArea != null) area = product.defaultArea
+                                        }
+                                        .padding(12.dp),
+                                    style = MaterialTheme.typography.bodyMedium
+                                )
+                            }
+                        }
+                    }
+                }
+
                 if (type == AddType.ITEM) {
                     Spacer(Modifier.height(8.dp))
-                    OutlinedTextField(
-                        value = area,
-                        onValueChange = { area = it },
-                        label = { Text("Bereich (optional, z.B. Tiefkühl)") },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth()
-                    )
+                    Box(modifier = Modifier.fillMaxWidth()) {
+                        OutlinedTextField(
+                            value = area,
+                            onValueChange = { 
+                                area = it
+                                areaExpanded = it.isNotBlank()
+                            },
+                            label = { Text("Bereich (optional, z.B. Tiefkühl)") },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth(),
+                            trailingIcon = {
+                                IconButton(onClick = { areaExpanded = !areaExpanded }) {
+                                    Icon(Icons.Default.ArrowDropDown, contentDescription = null)
+                                }
+                            }
+                        )
+                        DropdownMenu(
+                            expanded = areaExpanded && (areaSuggestions.isNotEmpty() || catalogAreas.isNotEmpty()),
+                            onDismissRequest = { areaExpanded = false },
+                            properties = PopupProperties(focusable = false)
+                        ) {
+                            val listToDisplay = if (area.isBlank()) catalogAreas else areaSuggestions
+                            listToDisplay.forEach { suggestion ->
+                                DropdownMenuItem(
+                                    text = { Text(suggestion.name) },
+                                    onClick = {
+                                        area = suggestion.name
+                                        areaExpanded = false
+                                    }
+                                )
+                            }
+                        }
+                    }
                 }
                 if (type == AddType.CATEGORY) {
                     Spacer(Modifier.height(16.dp))
                     Text("Farbe wählen", style = MaterialTheme.typography.labelMedium)
                     ColorPicker(selectedColor = selectedColor, onColorSelected = { selectedColor = it })
+                    
+                    Spacer(Modifier.height(16.dp))
+                    HorizontalDivider()
+                    Spacer(Modifier.height(16.dp))
+                    
+                    Text("Katalog importieren (optional)", style = MaterialTheme.typography.titleSmall)
+                    Spacer(Modifier.height(8.dp))
+                    
+                    Box {
+                        OutlinedButton(
+                            onClick = { sourceExpanded = true },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text(importSource?.name ?: "Quelle wählen")
+                            Spacer(Modifier.weight(1f))
+                            Icon(Icons.Default.ArrowDropDown, contentDescription = null)
+                        }
+                        DropdownMenu(
+                            expanded = sourceExpanded,
+                            onDismissRequest = { sourceExpanded = false }
+                        ) {
+                            DropdownMenuItem(
+                                text = { Text("Nicht importieren") },
+                                onClick = { importSource = null; sourceExpanded = false }
+                            )
+                            allCategories.forEach { cat ->
+                                DropdownMenuItem(
+                                    text = { Text(cat.name) },
+                                    onClick = { importSource = cat; sourceExpanded = false }
+                                )
+                            }
+                        }
+                    }
+                    
+                    if (importSource != null) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Checkbox(checked = impAreas, onCheckedChange = { impAreas = it })
+                            Text("Bereiche", style = MaterialTheme.typography.bodyMedium)
+                            Spacer(Modifier.width(16.dp))
+                            Checkbox(checked = impProducts, onCheckedChange = { impProducts = it })
+                            Text("Produkte", style = MaterialTheme.typography.bodyMedium)
+                        }
+                    }
                 }
             }
         },
         confirmButton = {
             Button(onClick = { 
                 if (text.isNotBlank()) {
-                    onConfirm(text, if (type == AddType.CATEGORY) selectedColor else null, area.ifBlank { null })
+                    onConfirm(
+                        text, 
+                        if (type == AddType.CATEGORY) selectedColor else null, 
+                        area.ifBlank { null },
+                        importSource?.id,
+                        impAreas,
+                        impProducts
+                    )
                 }
             }) {
                 Text("Hinzufügen")
@@ -644,11 +779,29 @@ fun AddEntryDialog(type: AddType, onDismiss: () -> Unit, onConfirm: (String, Col
 }
 
 @Composable
-fun SettingsDialog(category: Category, onDismiss: () -> Unit, onSave: (Boolean, Color) -> Unit, onDelete: () -> Unit) {
+fun SettingsDialog(
+    category: Category, 
+    onDismiss: () -> Unit, 
+    onSave: (Boolean, Color) -> Unit, 
+    onDelete: () -> Unit,
+    viewModel: MainViewModel,
+    allCategories: List<Category>
+) {
     var hideChecked by remember { mutableStateOf(category.settings.hideCheckedItems) }
     var selectedColor by remember { mutableStateOf(Color(category.color)) }
     val clipboardManager = LocalClipboardManager.current
     var showDeleteConfirm by remember { mutableStateOf(false) }
+    
+    var showCatalogManager by remember { mutableStateOf(false) }
+
+    if (showCatalogManager) {
+        CatalogManagerDialog(
+            category = category,
+            onDismiss = { showCatalogManager = false },
+            viewModel = viewModel,
+            allCategories = allCategories
+        )
+    }
 
     if (showDeleteConfirm) {
         AlertDialog(
@@ -671,7 +824,7 @@ fun SettingsDialog(category: Category, onDismiss: () -> Unit, onSave: (Boolean, 
         onDismissRequest = onDismiss,
         title = { Text("Einstellungen: ${category.name}") },
         text = {
-            Column {
+            Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Checkbox(checked = hideChecked, onCheckedChange = { hideChecked = it })
                     Text("Erledigte Einträge ausblenden")
@@ -680,6 +833,16 @@ fun SettingsDialog(category: Category, onDismiss: () -> Unit, onSave: (Boolean, 
                 Text("Farbe wählen", style = MaterialTheme.typography.labelMedium)
                 ColorPicker(selectedColor = selectedColor, onColorSelected = { selectedColor = it })
                 
+                Spacer(Modifier.height(16.dp))
+                Button(
+                    onClick = { showCatalogManager = true },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Icon(Icons.Default.Inventory, contentDescription = null)
+                    Spacer(Modifier.width(8.dp))
+                    Text("Katalog verwalten (Bereiche/Produkte)")
+                }
+
                 Spacer(Modifier.height(16.dp))
                 Text("Kategorie-ID (zum Teilen):", style = MaterialTheme.typography.labelMedium)
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -716,6 +879,255 @@ fun SettingsDialog(category: Category, onDismiss: () -> Unit, onSave: (Boolean, 
             TextButton(onClick = onDismiss) { Text("Abbrechen") }
         }
     )
+}
+
+@Composable
+fun CatalogManagerDialog(
+    category: Category,
+    onDismiss: () -> Unit,
+    viewModel: MainViewModel,
+    allCategories: List<Category>
+) {
+    val areas by viewModel.catalogAreas.collectAsState()
+    val products by viewModel.catalogProducts.collectAsState()
+    
+    var showAddArea by remember { mutableStateOf(false) }
+    var showAddProduct by remember { mutableStateOf(false) }
+    var showImport by remember { mutableStateOf(false) }
+    
+    var editingArea by remember { mutableStateOf<de.haberland.meilists.model.CatalogArea?>(null) }
+    var editingProduct by remember { mutableStateOf<de.haberland.meilists.model.CatalogProduct?>(null) }
+    
+    var tabIndex by remember { mutableIntStateOf(0) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false),
+        modifier = Modifier.fillMaxSize().padding(16.dp),
+        title = { 
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("Katalog: ${category.name}", modifier = Modifier.weight(1f))
+                IconButton(onClick = { showImport = true }) {
+                    Icon(Icons.Default.CloudDownload, contentDescription = "Importieren")
+                }
+            }
+        },
+        text = {
+            Column {
+                TabRow(selectedTabIndex = tabIndex) {
+                    Tab(selected = tabIndex == 0, onClick = { tabIndex = 0 }, text = { Text("Produkte") })
+                    Tab(selected = tabIndex == 1, onClick = { tabIndex = 1 }, text = { Text("Bereiche") })
+                }
+                
+                Spacer(Modifier.height(8.dp))
+                
+                if (tabIndex == 0) {
+                    LazyColumn(modifier = Modifier.weight(1f)) {
+                        items(products) { product ->
+                            Row(
+                                modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(modifier = Modifier.weight(1f).clickable { editingProduct = product }) {
+                                    Text(product.name, style = MaterialTheme.typography.bodyLarge)
+                                    if (product.defaultArea != null) {
+                                        Text(product.defaultArea, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
+                                    }
+                                }
+                                IconButton(onClick = { viewModel.deleteCatalogProduct(category.id, product.id) }) {
+                                    Icon(Icons.Default.Delete, contentDescription = null, tint = MaterialTheme.colorScheme.error)
+                                }
+                            }
+                            HorizontalDivider()
+                        }
+                    }
+                    Button(onClick = { showAddProduct = true }, modifier = Modifier.fillMaxWidth()) {
+                        Text("Produkt hinzufügen")
+                    }
+                } else {
+                    LazyColumn(modifier = Modifier.weight(1f)) {
+                        items(areas) { area ->
+                            Row(
+                                modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    area.name, 
+                                    modifier = Modifier.weight(1f).clickable { editingArea = area }, 
+                                    style = MaterialTheme.typography.bodyLarge
+                                )
+                                IconButton(onClick = { viewModel.deleteCatalogArea(category.id, area.id, area.name) }) {
+                                    Icon(Icons.Default.Delete, contentDescription = null, tint = MaterialTheme.colorScheme.error)
+                                }
+                            }
+                            HorizontalDivider()
+                        }
+                    }
+                    Button(onClick = { showAddArea = true }, modifier = Modifier.fillMaxWidth()) {
+                        Text("Bereich hinzufügen")
+                    }
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Schließen") } }
+    )
+
+    if (showAddArea) {
+        var name by remember { mutableStateOf("") }
+        AlertDialog(
+            onDismissRequest = { showAddArea = false },
+            title = { Text("Bereich hinzufügen") },
+            text = { OutlinedTextField(value = name, onValueChange = { name = it }, label = { Text("Name") }) },
+            confirmButton = { 
+                Button(onClick = { 
+                    if (name.isNotBlank()) {
+                        viewModel.addCatalogArea(category.id, name)
+                        showAddArea = false
+                    }
+                }) { Text("Hinzufügen") }
+            }
+        )
+    }
+
+    if (showAddProduct) {
+        var name by remember { mutableStateOf("") }
+        var selectedArea by remember { mutableStateOf<String?>(null) }
+        var expanded by remember { mutableStateOf(false) }
+        
+        AlertDialog(
+            onDismissRequest = { showAddProduct = false },
+            title = { Text("Produkt hinzufügen") },
+            text = {
+                Column {
+                    OutlinedTextField(value = name, onValueChange = { name = it }, label = { Text("Name") }, modifier = Modifier.fillMaxWidth())
+                    Spacer(Modifier.height(8.dp))
+                    Box {
+                        OutlinedButton(onClick = { expanded = true }, modifier = Modifier.fillMaxWidth()) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(selectedArea ?: "Bereich wählen (optional)", modifier = Modifier.weight(1f))
+                                Icon(Icons.Default.ArrowDropDown, contentDescription = null)
+                            }
+                        }
+                        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+                            DropdownMenuItem(text = { Text("Kein Bereich") }, onClick = { selectedArea = null; expanded = false })
+                            areas.forEach { area ->
+                                DropdownMenuItem(text = { Text(area.name) }, onClick = { selectedArea = area.name; expanded = false })
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = { 
+                Button(onClick = { 
+                    if (name.isNotBlank()) {
+                        viewModel.addCatalogProduct(category.id, name, selectedArea)
+                        showAddProduct = false
+                    }
+                }) { Text("Hinzufügen") }
+            }
+        )
+    }
+
+    editingArea?.let { area ->
+        var name by remember { mutableStateOf(area.name) }
+        AlertDialog(
+            onDismissRequest = { editingArea = null },
+            title = { Text("Bereich bearbeiten") },
+            text = { OutlinedTextField(value = name, onValueChange = { name = it }, label = { Text("Name") }) },
+            confirmButton = { 
+                Button(onClick = { 
+                    if (name.isNotBlank()) {
+                        viewModel.renameCatalogArea(category.id, area.id, area.name, name)
+                        editingArea = null
+                    }
+                }) { Text("Speichern") }
+            }
+        )
+    }
+
+    editingProduct?.let { product ->
+        var name by remember { mutableStateOf(product.name) }
+        var selectedArea by remember { mutableStateOf(product.defaultArea) }
+        var expanded by remember { mutableStateOf(false) }
+        
+        AlertDialog(
+            onDismissRequest = { editingProduct = null },
+            title = { Text("Produkt bearbeiten") },
+            text = {
+                Column {
+                    OutlinedTextField(value = name, onValueChange = { name = it }, label = { Text("Name") }, modifier = Modifier.fillMaxWidth())
+                    Spacer(Modifier.height(8.dp))
+                    Box {
+                        OutlinedButton(onClick = { expanded = true }, modifier = Modifier.fillMaxWidth()) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(selectedArea ?: "Bereich wählen (optional)", modifier = Modifier.weight(1f))
+                                Icon(Icons.Default.ArrowDropDown, contentDescription = null)
+                            }
+                        }
+                        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+                            DropdownMenuItem(text = { Text("Kein Bereich") }, onClick = { selectedArea = null; expanded = false })
+                            areas.forEach { a ->
+                                DropdownMenuItem(text = { Text(a.name) }, onClick = { selectedArea = a.name; expanded = false })
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = { 
+                Button(onClick = { 
+                    if (name.isNotBlank()) {
+                        viewModel.updateCatalogProduct(category.id, product.id, name, selectedArea)
+                        editingProduct = null
+                    }
+                }) { Text("Speichern") }
+            }
+        )
+    }
+
+    if (showImport) {
+        var selectedSource by remember { mutableStateOf<Category?>(null) }
+        var impAreas by remember { mutableStateOf(true) }
+        var impProducts by remember { mutableStateOf(true) }
+        var expanded by remember { mutableStateOf(false) }
+
+        AlertDialog(
+            onDismissRequest = { showImport = false },
+            title = { Text("Katalog importieren") },
+            text = {
+                Column {
+                    Text("Quelle wählen:")
+                    Box {
+                        OutlinedButton(onClick = { expanded = true }, modifier = Modifier.fillMaxWidth()) {
+                            Text(selectedSource?.name ?: "Kategorie wählen")
+                        }
+                        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+                            allCategories.filter { it.id != category.id }.forEach { cat ->
+                                DropdownMenuItem(text = { Text(cat.name) }, onClick = { selectedSource = cat; expanded = false })
+                            }
+                        }
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Checkbox(checked = impAreas, onCheckedChange = { impAreas = it })
+                        Text("Bereiche importieren")
+                    }
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Checkbox(checked = impProducts, onCheckedChange = { impProducts = it })
+                        Text("Produkte importieren")
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    enabled = selectedSource != null,
+                    onClick = { 
+                        selectedSource?.let { viewModel.importCatalog(category.id, it.id, impAreas, impProducts) }
+                        showImport = false
+                    }
+                ) { Text("Importieren") }
+            }
+        )
+    }
 }
 
 @Composable

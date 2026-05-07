@@ -37,3 +37,16 @@ data class ListItem(
     val timestamp: Long = System.currentTimeMillis(),
     val area: String? = null
 )
+
+data class CatalogArea(
+    val id: String = UUID.randomUUID().toString(),
+    val categoryId: String,
+    val name: String
+)
+
+data class CatalogProduct(
+    val id: String = UUID.randomUUID().toString(),
+    val categoryId: String,
+    val name: String,
+    val defaultArea: String? = null
+)

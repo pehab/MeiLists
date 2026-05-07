@@ -1,3 +1,4 @@
+@file:OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
 package de.haberland.meilists
 
 import android.app.Application
@@ -74,6 +75,20 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private val _selectedCategoryId = MutableStateFlow<String?>(null)
     val selectedCategoryId: StateFlow<String?> = _selectedCategoryId.asStateFlow()
+
+    val catalogAreas: StateFlow<List<CatalogArea>> = selectedCategoryId.flatMapLatest { catId ->
+        if (catId == null) flowOf(emptyList())
+        else dao.getCatalogAreas(catId).map { entities ->
+            entities.map { CatalogArea(it.id, it.categoryId, it.name) }
+        }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val catalogProducts: StateFlow<List<CatalogProduct>> = selectedCategoryId.flatMapLatest { catId ->
+        if (catId == null) flowOf(emptyList())
+        else dao.getCatalogProducts(catId).map { entities ->
+            entities.map { CatalogProduct(it.id, it.categoryId, it.name, it.defaultArea) }
+        }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     val lists: StateFlow<List<ShoppingList>> = dao.getAllLists()
         .map { entities ->
@@ -219,12 +234,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private suspend fun removeLocalCategory(categoryId: String) {
         activeListeners["lists_$categoryId"]?.remove()
         activeListeners.remove("lists_$categoryId")
+        activeListeners["catalog_areas_$categoryId"]?.remove()
+        activeListeners.remove("catalog_areas_$categoryId")
+        activeListeners["catalog_products_$categoryId"]?.remove()
+        activeListeners.remove("catalog_products_$categoryId")
+        
         lists.value.filter { it.categoryId == categoryId }.forEach { removeLocalList(it.id) }
         dao.deleteCategory(categoryId)
     }
 
     private fun syncListsForCategory(categoryId: String) {
         if (activeListeners.containsKey("lists_$categoryId")) return
+        syncCatalogForCategory(categoryId)
         
         val listener = firestore.collection("shopping_lists")
             .whereEqualTo("categoryId", categoryId)
@@ -294,7 +315,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         activeListeners["items_$listId"] = listener
     }
 
-    fun addCategory(name: String, color: Long) {
+    fun addCategory(
+        name: String, 
+        color: Long, 
+        importSourceId: String? = null, 
+        impAreas: Boolean = false, 
+        impProducts: Boolean = false
+    ) {
         viewModelScope.launch {
             val user = auth.currentUser
             val id = java.util.UUID.randomUUID().toString()
@@ -323,6 +350,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     allowedUsers = allowedUsers.joinToString(",")
                 ))
             }
+            
+            if (importSourceId != null) {
+                importCatalog(id, importSourceId, impAreas, impProducts)
+            }
+
             selectCategory(id)
         }
     }
@@ -354,14 +386,66 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun selectList(id: String?) { _selectedListId.value = id }
 
+    private fun syncCatalogForCategory(categoryId: String) {
+        if (activeListeners.containsKey("catalog_areas_$categoryId")) return
+
+        val areaListener = firestore.collection("catalog_areas")
+            .whereEqualTo("categoryId", categoryId)
+            .addSnapshotListener { snapshot, e ->
+                if (e != null || snapshot == null) return@addSnapshotListener
+                snapshot.documentChanges.forEach { change ->
+                    val doc = change.document
+                    when (change.type) {
+                        DocumentChange.Type.ADDED, DocumentChange.Type.MODIFIED -> {
+                            viewModelScope.launch {
+                                dao.insertCatalogArea(CatalogAreaEntity(doc.id, categoryId, doc.getString("name") ?: ""))
+                            }
+                        }
+                        DocumentChange.Type.REMOVED -> {
+                            viewModelScope.launch { dao.deleteCatalogArea(doc.id) }
+                        }
+                    }
+                }
+            }
+        activeListeners["catalog_areas_$categoryId"] = areaListener
+
+        val productListener = firestore.collection("catalog_products")
+            .whereEqualTo("categoryId", categoryId)
+            .addSnapshotListener { snapshot, e ->
+                if (e != null || snapshot == null) return@addSnapshotListener
+                snapshot.documentChanges.forEach { change ->
+                    val doc = change.document
+                    when (change.type) {
+                        DocumentChange.Type.ADDED, DocumentChange.Type.MODIFIED -> {
+                            viewModelScope.launch {
+                                dao.insertCatalogProduct(CatalogProductEntity(
+                                    doc.id, 
+                                    categoryId, 
+                                    doc.getString("name") ?: "",
+                                    doc.getString("defaultArea")
+                                ))
+                            }
+                        }
+                        DocumentChange.Type.REMOVED -> {
+                            viewModelScope.launch { dao.deleteCatalogProduct(doc.id) }
+                        }
+                    }
+                }
+            }
+        activeListeners["catalog_products_$categoryId"] = productListener
+    }
+
     fun addItem(listId: String, text: String, area: String? = null) {
         viewModelScope.launch {
             val id = java.util.UUID.randomUUID().toString()
             val timestamp = System.currentTimeMillis()
             
-            val list = lists.value.find { it.id == listId }
-            val category = categories.value.find { it.id == list?.categoryId }
+            val list = lists.value.find { it.id == listId } ?: return@launch
+            val category = categories.value.find { it.id == list.categoryId }
             
+            // Auto-Learning: Produkt in den Katalog aufnehmen, falls neu
+            updateCatalogWithNewItem(list.categoryId, text, area)
+
             if (category?.settings?.type == StorageType.FIREBASE) {
                 // Bei Firebase-Listen lassen wir den Snapshot-Listener das lokale Insert übernehmen
                 // Das verhindert, dass wir lokal einfügen UND der Listener fast gleichzeitig triggert
@@ -376,6 +460,21 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 // Bei lokalen Listen direkt in Room
                 dao.insertItem(ListItemEntity(id, listId, text, false, timestamp, area))
             }
+        }
+    }
+
+    private suspend fun updateCatalogWithNewItem(categoryId: String, text: String, area: String?) {
+        // Bereich speichern, falls neu
+        if (!area.isNullOrBlank()) {
+            val existingArea = dao.getAreaByName(categoryId, area)
+            if (existingArea == null) {
+                addCatalogArea(categoryId, area)
+            }
+        }
+
+        val existingProduct = dao.getProductByName(categoryId, text)
+        if (existingProduct == null) {
+            addCatalogProduct(categoryId, text, area)
         }
     }
 
@@ -454,6 +553,151 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     "color", color,
                     "hideCheckedItems", hideChecked
                 ).await()
+            }
+        }
+    }
+
+    // --- Katalog Management ---
+
+    fun addCatalogArea(categoryId: String, name: String) {
+        viewModelScope.launch {
+            val id = java.util.UUID.randomUUID().toString()
+            val category = categories.value.find { it.id == categoryId }
+            if (category?.settings?.type == StorageType.FIREBASE) {
+                firestore.collection("catalog_areas").document(id).set(hashMapOf(
+                    "categoryId" to categoryId,
+                    "name" to name
+                ))
+            } else {
+                dao.insertCatalogArea(CatalogAreaEntity(id, categoryId, name))
+            }
+        }
+    }
+
+    fun renameCatalogArea(categoryId: String, areaId: String, oldName: String, newName: String) {
+        viewModelScope.launch {
+            val category = categories.value.find { it.id == categoryId }
+            if (category?.settings?.type == StorageType.FIREBASE) {
+                firestore.collection("catalog_areas").document(areaId).update("name", newName)
+                // Kaskadierendes Update in Firebase (manuell für alle Produkte/Items)
+                val products = firestore.collection("catalog_products")
+                    .whereEqualTo("categoryId", categoryId)
+                    .whereEqualTo("defaultArea", oldName).get().await()
+                products.documents.forEach { it.reference.update("defaultArea", newName) }
+                
+                // Hinweis: Items in Listen sind viele, hier ggf. nur lokal oder über Cloud Functions.
+                // Wir machen es hier erst mal lokal via Room (Sync zieht es dann glatt)
+            } else {
+                dao.insertCatalogArea(CatalogAreaEntity(areaId, categoryId, newName))
+            }
+            dao.updateAreaInProducts(categoryId, oldName, newName)
+            dao.updateAreaInItems(categoryId, oldName, newName)
+        }
+    }
+
+    fun deleteCatalogArea(categoryId: String, areaId: String, areaName: String) {
+        viewModelScope.launch {
+            val category = categories.value.find { it.id == categoryId }
+            if (category?.settings?.type == StorageType.FIREBASE) {
+                firestore.collection("catalog_areas").document(areaId).delete()
+                val products = firestore.collection("catalog_products")
+                    .whereEqualTo("categoryId", categoryId)
+                    .whereEqualTo("defaultArea", areaName).get().await()
+                products.documents.forEach { it.reference.update("defaultArea", null) }
+            } else {
+                dao.deleteCatalogArea(areaId)
+            }
+            dao.updateAreaInProducts(categoryId, areaName, null)
+            dao.updateAreaInItems(categoryId, areaName, null)
+        }
+    }
+
+    fun addCatalogProduct(categoryId: String, name: String, area: String?) {
+        viewModelScope.launch {
+            val id = java.util.UUID.randomUUID().toString()
+            val category = categories.value.find { it.id == categoryId }
+            if (category?.settings?.type == StorageType.FIREBASE) {
+                firestore.collection("catalog_products").document(id).set(hashMapOf(
+                    "categoryId" to categoryId,
+                    "name" to name,
+                    "defaultArea" to area
+                ))
+            } else {
+                dao.insertCatalogProduct(CatalogProductEntity(id, categoryId, name, area))
+            }
+        }
+    }
+
+    fun updateCatalogProduct(categoryId: String, productId: String, newName: String, newArea: String?) {
+        viewModelScope.launch {
+            val category = categories.value.find { it.id == categoryId }
+            if (category?.settings?.type == StorageType.FIREBASE) {
+                firestore.collection("catalog_products").document(productId).update(mapOf(
+                    "name" to newName,
+                    "defaultArea" to newArea
+                ))
+            } else {
+                dao.insertCatalogProduct(CatalogProductEntity(productId, categoryId, newName, newArea))
+            }
+        }
+    }
+
+    fun deleteCatalogProduct(categoryId: String, productId: String) {
+        viewModelScope.launch {
+            val category = categories.value.find { it.id == categoryId }
+            if (category?.settings?.type == StorageType.FIREBASE) {
+                firestore.collection("catalog_products").document(productId).delete()
+            } else {
+                dao.deleteCatalogProduct(productId)
+            }
+        }
+    }
+
+    fun importCatalog(targetCategoryId: String, sourceCategoryId: String, importAreas: Boolean, importProducts: Boolean) {
+        viewModelScope.launch {
+            val sourceCategory = categories.value.find { it.id == sourceCategoryId } ?: return@launch
+            
+            if (importAreas) {
+                val areaNames = if (sourceCategory.settings.type == StorageType.FIREBASE) {
+                    try {
+                        firestore.collection("catalog_areas")
+                            .whereEqualTo("categoryId", sourceCategoryId)
+                            .get().await()
+                            .documents.mapNotNull { it.getString("name") }
+                    } catch (e: Exception) {
+                        Log.e("MeiLists", "Fehler beim Importieren der Bereiche: ${e.message}")
+                        emptyList()
+                    }
+                } else {
+                    dao.getCatalogAreasSync(sourceCategoryId).map { it.name }
+                }
+                
+                areaNames.forEach { name ->
+                    if (name.isNotBlank()) addCatalogArea(targetCategoryId, name)
+                }
+            }
+            
+            if (importProducts) {
+                val productData = if (sourceCategory.settings.type == StorageType.FIREBASE) {
+                    try {
+                        firestore.collection("catalog_products")
+                            .whereEqualTo("categoryId", sourceCategoryId)
+                            .get().await()
+                            .documents.mapNotNull { 
+                                val name = it.getString("name")
+                                if (name != null) name to it.getString("defaultArea") else null
+                            }
+                    } catch (e: Exception) {
+                        Log.e("MeiLists", "Fehler beim Importieren der Produkte: ${e.message}")
+                        emptyList()
+                    }
+                } else {
+                    dao.getCatalogProductsSync(sourceCategoryId).map { it.name to it.defaultArea }
+                }
+                
+                productData.forEach { (name, area) ->
+                    if (name.isNotBlank()) addCatalogProduct(targetCategoryId, name, area)
+                }
             }
         }
     }

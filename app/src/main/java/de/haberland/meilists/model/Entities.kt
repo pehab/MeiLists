@@ -33,3 +33,18 @@ data class ListItemEntity(
     val timestamp: Long,
     val area: String? = null
 )
+
+@Entity(tableName = "catalog_areas")
+data class CatalogAreaEntity(
+    @PrimaryKey val id: String,
+    val categoryId: String,
+    val name: String
+)
+
+@Entity(tableName = "catalog_products")
+data class CatalogProductEntity(
+    @PrimaryKey val id: String,
+    val categoryId: String,
+    val name: String,
+    val defaultArea: String? = null
+)
