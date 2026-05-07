@@ -5,6 +5,8 @@ import android.util.Log
 import androidx.credentials.ClearCredentialStateRequest
 import androidx.credentials.CredentialManager
 import androidx.credentials.GetCredentialRequest
+import androidx.credentials.exceptions.GetCredentialException
+import androidx.credentials.exceptions.NoCredentialException
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.google.android.libraries.identity.googleid.GetGoogleIdOption
@@ -75,7 +77,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     val lists: StateFlow<List<ShoppingList>> = dao.getAllLists()
         .map { entities ->
-            entities.map { ShoppingList(it.id, it.categoryId, it.name, it.sortByArea) }
+            entities.map { ShoppingList(it.id, it.categoryId, it.name, it.sortByArea, it.timestamp) }
         }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     private val _selectedListId = MutableStateFlow<String?>(null)
@@ -101,6 +103,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             combine(selectedCategoryId, lists) { catId, allLists ->
                 catId to allLists.filter { it.categoryId == catId }
+                    .sortedWith(compareByDescending<ShoppingList> { it.timestamp }.thenBy { it.name })
             }.collectLatest { (catId, catLists) ->
                 if (catId != null && (_selectedListId.value == null || catLists.none { it.id == _selectedListId.value })) {
                     if (catLists.isNotEmpty()) {
@@ -158,6 +161,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     auth.signInWithCredential(firebaseCredential).await()
                     _uiEvent.emit(UiEvent.ShowToast)
                 }
+            } catch (e: NoCredentialException) {
+                Log.d("MeiLists", "Keine Zugangsdaten gefunden: ${e.message}")
+            } catch (e: GetCredentialException) {
+                Log.e("MeiLists", "Credential Fehler: ${e.message}")
             } catch (e: Exception) {
                 Log.e("MeiLists", "Login Fehler: ${e.message}")
             }
@@ -233,7 +240,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                                     id = id, 
                                     categoryId = categoryId, 
                                     name = doc.getString("name") ?: "",
-                                    sortByArea = doc.getBoolean("sortByArea") ?: false
+                                    sortByArea = doc.getBoolean("sortByArea") ?: false,
+                                    timestamp = doc.getLong("timestamp") ?: 0L
                                 ))
                                 syncItemsForList(id)
                             }
@@ -292,9 +300,28 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             val id = java.util.UUID.randomUUID().toString()
             val ownerId = user?.uid
             val allowedUsers = ownerId?.let { listOf(it) } ?: emptyList()
-            dao.insertCategory(CategoryEntity(id, name, color, if (user != null) StorageType.FIREBASE.name else StorageType.LOCAL.name, null, false, ownerId, allowedUsers.joinToString(",")))
+            
             if (user != null) {
-                firestore.collection("categories").document(id).set(hashMapOf("name" to name, "color" to color, "ownerId" to ownerId, "allowedUsers" to allowedUsers, "hideCheckedItems" to false)).await()
+                // Bei Firebase-Kategorien lassen wir den Snapshot-Listener das lokale Insert übernehmen
+                firestore.collection("categories").document(id).set(hashMapOf(
+                    "name" to name, 
+                    "color" to color, 
+                    "ownerId" to ownerId, 
+                    "allowedUsers" to allowedUsers, 
+                    "hideCheckedItems" to false
+                )).await()
+            } else {
+                // Nur lokal speichern
+                dao.insertCategory(CategoryEntity(
+                    id = id, 
+                    name = name, 
+                    color = color, 
+                    storageType = StorageType.LOCAL.name, 
+                    remotePath = null, 
+                    hideCheckedItems = false, 
+                    ownerId = ownerId, 
+                    allowedUsers = allowedUsers.joinToString(",")
+                ))
             }
             selectCategory(id)
         }
@@ -320,6 +347,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun selectCategory(id: String?) {
         _selectedCategoryId.value = id
+        // Wir setzen die Listen-ID erst mal auf null, die UI nimmt sich automatisch die erste Liste
+        // oder der combine-Block unten setzt sie, sobald die Daten da sind.
         _selectedListId.value = null
     }
 
@@ -329,10 +358,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             val id = java.util.UUID.randomUUID().toString()
             val timestamp = System.currentTimeMillis()
-            dao.insertItem(ListItemEntity(id, listId, text, false, timestamp, area))
+            
             val list = lists.value.find { it.id == listId }
             val category = categories.value.find { it.id == list?.categoryId }
+            
             if (category?.settings?.type == StorageType.FIREBASE) {
+                // Bei Firebase-Listen lassen wir den Snapshot-Listener das lokale Insert übernehmen
+                // Das verhindert, dass wir lokal einfügen UND der Listener fast gleichzeitig triggert
                 firestore.collection("list_items").document(id).set(hashMapOf(
                     "listId" to listId, 
                     "text" to text, 
@@ -340,6 +372,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     "timestamp" to timestamp,
                     "area" to area
                 )).await()
+            } else {
+                // Bei lokalen Listen direkt in Room
+                dao.insertItem(ListItemEntity(id, listId, text, false, timestamp, area))
             }
         }
     }
@@ -426,14 +461,20 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun addList(categoryId: String, name: String) {
         viewModelScope.launch {
             val id = java.util.UUID.randomUUID().toString()
-            dao.insertList(ShoppingListEntity(id, categoryId, name))
+            val timestamp = System.currentTimeMillis()
+            
             val category = categories.value.find { it.id == categoryId }
             if (category?.settings?.type == StorageType.FIREBASE) {
+                // Bei Firebase-Listen lassen wir den Snapshot-Listener das lokale Insert übernehmen
                 firestore.collection("shopping_lists").document(id).set(hashMapOf(
                     "categoryId" to categoryId, 
                     "name" to name,
-                    "sortByArea" to false
+                    "sortByArea" to false,
+                    "timestamp" to timestamp
                 )).await()
+            } else {
+                // Nur lokal speichern
+                dao.insertList(ShoppingListEntity(id, categoryId, name, false, timestamp))
             }
             selectList(id)
         }
@@ -443,7 +484,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             val list = lists.value.find { it.id == listId } ?: return@launch
             val category = categories.value.find { it.id == list.categoryId }
-            dao.insertList(ShoppingListEntity(id = listId, categoryId = list.categoryId, name = newName, sortByArea = list.sortByArea))
+            dao.insertList(ShoppingListEntity(id = listId, categoryId = list.categoryId, name = newName, sortByArea = list.sortByArea, timestamp = list.timestamp))
             if (category?.settings?.type == StorageType.FIREBASE) {
                 firestore.collection("shopping_lists").document(listId).update("name", newName).await()
             }
@@ -454,7 +495,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             val list = lists.value.find { it.id == listId } ?: return@launch
             val newValue = !list.sortByArea
-            dao.insertList(ShoppingListEntity(id = listId, categoryId = list.categoryId, name = list.name, sortByArea = newValue))
+            dao.insertList(ShoppingListEntity(id = listId, categoryId = list.categoryId, name = list.name, sortByArea = newValue, timestamp = list.timestamp))
             val category = categories.value.find { it.id == list.categoryId }
             if (category?.settings?.type == StorageType.FIREBASE) {
                 firestore.collection("shopping_lists").document(listId).update("sortByArea", newValue).await()

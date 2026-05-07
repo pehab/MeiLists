@@ -20,7 +20,8 @@ data class ShoppingListEntity(
     @PrimaryKey val id: String,
     val categoryId: String,
     val name: String,
-    val sortByArea: Boolean = false
+    val sortByArea: Boolean = false,
+    val timestamp: Long = System.currentTimeMillis()
 )
 
 @Entity(tableName = "list_items")

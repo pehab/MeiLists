@@ -24,6 +24,8 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalClipboardManager
@@ -76,10 +78,13 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
 
     val currentCategory = categories.find { it.id == selectedCategoryId }
     val categoryLists = lists.filter { it.categoryId == selectedCategoryId }
-    val currentList = categoryLists.find { it.id == selectedListId }
+        .sortedWith(compareByDescending<de.haberland.meilists.model.ShoppingList> { it.timestamp }.thenBy { it.name })
+    
+    val effectiveListId = selectedListId ?: categoryLists.firstOrNull()?.id
+    val currentList = categoryLists.find { it.id == effectiveListId }
     
     val filteredAndSortedItems = items
-        .filter { it.listId == selectedListId }
+        .filter { it.listId == effectiveListId }
         .filter { !it.isChecked || !(currentCategory?.settings?.hideCheckedItems ?: false) }
         .sortedWith { a, b ->
             // 1. Nach Status (offen vor erledigt)
@@ -268,7 +273,7 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
                         }
                     },
                     actions = {
-                        selectedListId?.let { listId ->
+                    effectiveListId?.let { listId ->
                             if (items.any { it.listId == listId && it.isChecked }) {
                                 IconButton(onClick = { viewModel.deleteCheckedItems(listId) }) {
                                     Icon(Icons.Default.DeleteSweep, contentDescription = "Erledigte löschen")
@@ -333,7 +338,7 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
                 )
             },
             floatingActionButton = {
-                if (selectedListId != null) {
+                if (effectiveListId != null && categoryLists.isNotEmpty()) {
                     FloatingActionButton(
                         onClick = { showAddDialog = AddType.ITEM },
                         containerColor = currentCategory?.let { Color(it.color) } ?: MaterialTheme.colorScheme.primaryContainer
@@ -345,8 +350,8 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
         ) { innerPadding ->
             Column(modifier = Modifier.padding(innerPadding)) {
                 if (selectedCategoryId != null) {
-                    val selectedIndex = categoryLists.indexOfFirst { it.id == selectedListId }.let { if (it == -1) 0 else it }
-                    
+                    val selectedIndex = categoryLists.indexOfFirst { it.id == effectiveListId }.let { if (it == -1) 0 else it }
+
                     ScrollableTabRow(
                         selectedTabIndex = selectedIndex,
                         edgePadding = 16.dp,
@@ -356,7 +361,7 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
                     ) {
                         categoryLists.forEach { list ->
                             Tab(
-                                selected = list.id == selectedListId,
+                                selected = list.id == effectiveListId,
                                 onClick = { viewModel.selectList(list.id) },
                                 text = { Text(list.name) }
                             )
@@ -364,7 +369,7 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
                         Tab(
                             selected = false,
                             onClick = { showAddDialog = AddType.LIST },
-                            text = { 
+                            text = {
                                 Row(verticalAlignment = Alignment.CenterVertically) {
                                     Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
                                     Spacer(Modifier.width(4.dp))
@@ -402,7 +407,7 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
                 when (type) {
                     AddType.CATEGORY -> viewModel.addCategory(name, color?.toArgb()?.toLong() ?: 0xFF6200EE)
                     AddType.LIST -> selectedCategoryId?.let { viewModel.addList(it, name) }
-                    AddType.ITEM -> selectedListId?.let { viewModel.addItem(it, name, area) }
+                    AddType.ITEM -> effectiveListId?.let { viewModel.addItem(it, name, area) }
                 }
                 showAddDialog = null
             }
@@ -425,15 +430,15 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
     }
 
     if (showDeleteListConfirm) {
-        val listToDelete = categoryLists.find { it.id == selectedListId }
+        val listToDelete = categoryLists.find { it.id == effectiveListId }
         AlertDialog(
             onDismissRequest = { showDeleteListConfirm = false },
             title = { Text("Liste löschen?") },
-            text = { Text("Möchtest du die Liste '${listToDelete?.name}' wirklich löschen?") },
+            text = { Text("Möchtest du die Liste '${listToDelete?.name ?: ""}' wirklich löschen?") },
             confirmButton = {
                 Button(
                     onClick = {
-                        selectedListId?.let { viewModel.deleteList(it) }
+                        effectiveListId?.let { viewModel.deleteList(it) }
                         showDeleteListConfirm = false
                     },
                     colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
@@ -446,7 +451,7 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
     }
 
     if (showRenameListDialog) {
-        val listToRename = categoryLists.find { it.id == selectedListId }
+        val listToRename = categoryLists.find { it.id == effectiveListId }
         var newName by remember { mutableStateOf(listToRename?.name ?: "") }
         AlertDialog(
             onDismissRequest = { showRenameListDialog = false },
@@ -463,7 +468,7 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
             confirmButton = {
                 Button(onClick = {
                     if (newName.isNotBlank()) {
-                        selectedListId?.let { viewModel.renameList(it, newName) }
+                        effectiveListId?.let { viewModel.renameList(it, newName) }
                         showRenameListDialog = false
                     }
                 }) { Text("Speichern") }
@@ -581,6 +586,12 @@ fun AddEntryDialog(type: AddType, onDismiss: () -> Unit, onConfirm: (String, Col
     var text by remember { mutableStateOf("") }
     var area by remember { mutableStateOf("") }
     var selectedColor by remember { mutableStateOf(Color(0xFF6200EE)) }
+    
+    val focusRequester = remember { FocusRequester() }
+
+    LaunchedEffect(Unit) {
+        focusRequester.requestFocus()
+    }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -596,7 +607,9 @@ fun AddEntryDialog(type: AddType, onDismiss: () -> Unit, onConfirm: (String, Col
                     onValueChange = { text = it },
                     label = { Text("Name") },
                     singleLine = true,
-                    modifier = Modifier.fillMaxWidth()
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .focusRequester(focusRequester)
                 )
                 if (type == AddType.ITEM) {
                     Spacer(Modifier.height(8.dp))
@@ -738,6 +751,12 @@ fun ColorPicker(selectedColor: Color, onColorSelected: (Color) -> Unit) {
 @Composable
 fun JoinCategoryDialog(onDismiss: () -> Unit, onConfirm: (String) -> Unit) {
     var code by remember { mutableStateOf("") }
+    val focusRequester = remember { FocusRequester() }
+
+    LaunchedEffect(Unit) {
+        focusRequester.requestFocus()
+    }
+
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("Einladung annehmen") },
@@ -747,7 +766,9 @@ fun JoinCategoryDialog(onDismiss: () -> Unit, onConfirm: (String) -> Unit) {
                 onValueChange = { code = it },
                 label = { Text("Kategorie-ID (Code)") },
                 singleLine = true,
-                modifier = Modifier.fillMaxWidth()
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .focusRequester(focusRequester)
             )
         },
         confirmButton = {
