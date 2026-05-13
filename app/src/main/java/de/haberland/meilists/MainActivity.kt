@@ -1,8 +1,15 @@
 @file:OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
+@file:Suppress(
+    "UNUSED_VALUE",
+    "ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE",
+    "AssignedValueIsNeverRead",
+    "SameParameterValue"
+)
 
 package de.haberland.meilists
 
 import android.app.Activity
+import android.content.ClipData
 import android.os.Bundle
 import android.widget.Toast
 import androidx.activity.ComponentActivity
@@ -30,9 +37,9 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
-import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.ClipEntry
+import androidx.compose.ui.platform.LocalClipboard
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -41,6 +48,7 @@ import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.window.PopupProperties
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.google.android.play.core.appupdate.AppUpdateManagerFactory
+import com.google.android.play.core.appupdate.AppUpdateOptions
 import com.google.android.play.core.install.model.AppUpdateType
 import de.haberland.meilists.model.Category
 import de.haberland.meilists.model.ListItem
@@ -83,33 +91,17 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
     var editingItem by remember { mutableStateOf<ListItem?>(null) }
 
     val currentCategory = categories.find { it.id == selectedCategoryId }
-    val categoryLists = lists.filter { it.categoryId == selectedCategoryId }
-        .sortedWith(compareByDescending<de.haberland.meilists.model.ShoppingList> { it.timestamp }.thenBy { it.name })
+    val categoryLists = sortedListsForCategory(lists, selectedCategoryId)
     
     val effectiveListId = selectedListId ?: categoryLists.firstOrNull()?.id
     val currentList = categoryLists.find { it.id == effectiveListId }
     
-    val filteredAndSortedItems = items
-        .filter { it.listId == effectiveListId }
-        .filter { !it.isChecked || !(currentCategory?.settings?.hideCheckedItems ?: false) }
-        .sortedWith { a, b ->
-            // 1. Nach Status (offen vor erledigt)
-            if (a.isChecked != b.isChecked) return@sortedWith a.isChecked.compareTo(b.isChecked)
-            
-            // 2. Optional nach Bereich sortieren
-            if (currentList?.sortByArea == true) {
-                val areaA = a.area ?: ""
-                val areaB = b.area ?: ""
-                if (areaA != areaB) {
-                    if (areaA.isEmpty()) return@sortedWith 1
-                    if (areaB.isEmpty()) return@sortedWith -1
-                    return@sortedWith areaA.compareTo(areaB)
-                }
-            }
-            
-            // 3. Nach Zeitstempel (neuere zuerst)
-            b.timestamp.compareTo(a.timestamp)
-        }
+    val filteredAndSortedItems = filteredAndSortedItemsForDisplay(
+        items = items,
+        listId = effectiveListId,
+        hideCheckedItems = currentCategory?.settings?.hideCheckedItems ?: false,
+        sortByArea = currentList?.sortByArea == true
+    )
 
     // Update-Check und UI-Events verarbeiten
     LaunchedEffect(Unit) {
@@ -120,8 +112,8 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
                     val appUpdateManager = AppUpdateManagerFactory.create(context)
                     appUpdateManager.startUpdateFlowForResult(
                         event.info,
-                        AppUpdateType.IMMEDIATE,
                         context as Activity,
+                        AppUpdateOptions.newBuilder(AppUpdateType.IMMEDIATE).build(),
                         1001
                     )
                 }
@@ -358,7 +350,7 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
                 if (selectedCategoryId != null) {
                     val selectedIndex = categoryLists.indexOfFirst { it.id == effectiveListId }.let { if (it == -1) 0 else it }
 
-                    ScrollableTabRow(
+                    PrimaryScrollableTabRow(
                         selectedTabIndex = selectedIndex,
                         edgePadding = 16.dp,
                         divider = {},
@@ -599,7 +591,7 @@ fun AddEntryDialog(
     onConfirm: (String, Color?, String?, String?, Boolean, Boolean) -> Unit, 
     catalogProducts: List<de.haberland.meilists.model.CatalogProduct> = emptyList(),
     catalogAreas: List<de.haberland.meilists.model.CatalogArea> = emptyList(),
-    allCategories: List<de.haberland.meilists.model.Category> = emptyList()
+    allCategories: List<Category> = emptyList()
 ) {
     var text by remember { mutableStateOf("") }
     var area by remember { mutableStateOf("") }
@@ -784,18 +776,19 @@ fun SettingsDialog(
     onDismiss: () -> Unit, 
     onSave: (Boolean, Color, Boolean) -> Unit, 
     onDelete: () -> Unit,
-    viewModel: MainViewModel,
+    viewModel: MainViewModel? = null,
     allCategories: List<Category>
 ) {
     var hideChecked by remember { mutableStateOf(category.settings.hideCheckedItems) }
     var autoLearningEnabled by remember { mutableStateOf(category.settings.autoLearningEnabled) }
     var selectedColor by remember { mutableStateOf(Color(category.color)) }
-    val clipboardManager = LocalClipboardManager.current
+    val clipboard = LocalClipboard.current
+    val coroutineScope = rememberCoroutineScope()
     var showDeleteConfirm by remember { mutableStateOf(false) }
     
     var showCatalogManager by remember { mutableStateOf(false) }
 
-    if (showCatalogManager) {
+    if (showCatalogManager && viewModel != null) {
         CatalogManagerDialog(
             category = category,
             onDismiss = { showCatalogManager = false },
@@ -838,14 +831,16 @@ fun SettingsDialog(
                 Text("Farbe wählen", style = MaterialTheme.typography.labelMedium)
                 ColorPicker(selectedColor = selectedColor, onColorSelected = { selectedColor = it })
                 
-                Spacer(Modifier.height(16.dp))
-                Button(
-                    onClick = { showCatalogManager = true },
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Icon(Icons.Default.Inventory, contentDescription = null)
-                    Spacer(Modifier.width(8.dp))
-                    Text("Katalog verwalten (Bereiche/Produkte)")
+                if (viewModel != null) {
+                    Spacer(Modifier.height(16.dp))
+                    Button(
+                        onClick = { showCatalogManager = true },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Icon(Icons.Default.Inventory, contentDescription = null)
+                        Spacer(Modifier.width(8.dp))
+                        Text("Katalog verwalten (Bereiche/Produkte)")
+                    }
                 }
 
                 Spacer(Modifier.height(16.dp))
@@ -856,7 +851,15 @@ fun SettingsDialog(
                         style = MaterialTheme.typography.bodySmall,
                         modifier = Modifier.weight(1f)
                     )
-                    IconButton(onClick = { clipboardManager.setText(AnnotatedString(category.id)) }) {
+                    IconButton(
+                        onClick = {
+                            coroutineScope.launch {
+                                clipboard.setClipEntry(
+                                    ClipEntry(ClipData.newPlainText("Kategorie-ID", category.id))
+                                )
+                            }
+                        }
+                    ) {
                         Icon(Icons.Default.ContentCopy, contentDescription = "ID kopieren", modifier = Modifier.size(20.dp))
                     }
                 }
@@ -919,7 +922,7 @@ fun CatalogManagerDialog(
         },
         text = {
             Column {
-                TabRow(selectedTabIndex = tabIndex) {
+                PrimaryTabRow(selectedTabIndex = tabIndex) {
                     Tab(selected = tabIndex == 0, onClick = { tabIndex = 0 }, text = { Text("Produkte") })
                     Tab(selected = tabIndex == 1, onClick = { tabIndex = 1 }, text = { Text("Bereiche") })
                 }

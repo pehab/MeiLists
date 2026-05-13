@@ -1,5 +1,6 @@
 package de.haberland.meilists.model
 
+import androidx.room.ColumnInfo
 import androidx.room.Entity
 import androidx.room.PrimaryKey
 
@@ -11,6 +12,7 @@ data class CategoryEntity(
     val storageType: String,
     val remotePath: String?,
     val hideCheckedItems: Boolean,
+    @ColumnInfo(defaultValue = "1")
     val autoLearningEnabled: Boolean = true,
     val ownerId: String? = null,
     val allowedUsers: String = "" // Als CSV String gespeichert

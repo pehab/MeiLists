@@ -34,7 +34,7 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
-        private val MIGRATION_11_12 = object : Migration(11, 12) {
+        internal val MIGRATION_11_12 = object : Migration(11, 12) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("ALTER TABLE categories ADD COLUMN autoLearningEnabled INTEGER NOT NULL DEFAULT 1")
             }
