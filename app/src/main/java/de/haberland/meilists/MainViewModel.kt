@@ -67,7 +67,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     settings = StorageSettings(
                         type = StorageType.valueOf(entity.storageType),
                         remotePath = entity.remotePath,
-                        hideCheckedItems = entity.hideCheckedItems
+                        hideCheckedItems = entity.hideCheckedItems,
+                        autoLearningEnabled = entity.autoLearningEnabled
                     )
                 )
             }
@@ -228,6 +229,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                                     storageType = StorageType.FIREBASE.name,
                                     remotePath = null,
                                     hideCheckedItems = doc.getBoolean("hideCheckedItems") ?: false,
+                                    autoLearningEnabled = doc.getBoolean("autoLearningEnabled") ?: true,
                                     ownerId = doc.getString("ownerId"),
                                     allowedUsers = (doc.get("allowedUsers") as? List<*>)?.joinToString(",") ?: ""
                                 ))
@@ -350,6 +352,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 storageType = storageType.name, 
                 remotePath = null, 
                 hideCheckedItems = false, 
+                autoLearningEnabled = true,
                 ownerId = ownerId, 
                 allowedUsers = allowedUsers.joinToString(",")
             ))
@@ -361,7 +364,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         "color" to color, 
                         "ownerId" to ownerId, 
                         "allowedUsers" to allowedUsers, 
-                        "hideCheckedItems" to false
+                        "hideCheckedItems" to false,
+                        "autoLearningEnabled" to true
                     )).await()
                 } catch (e: Exception) {
                     Log.e("MeiLists", "Fehler beim Firebase-Sync (Category): ${e.message}")
@@ -481,7 +485,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             val category = categories.value.find { it.id == list.categoryId }
             
             // Auto-Learning: Produkt in den Katalog aufnehmen, falls neu
-            updateCatalogWithNewItem(list.categoryId, text, area)
+            if (category?.settings?.autoLearningEnabled ?: true) {
+                updateCatalogWithNewItem(list.categoryId, text, area)
+            }
 
             // IMMER lokal speichern (Offline First)
             dao.insertItem(ListItemEntity(id, listId, text, false, timestamp, area))
@@ -628,14 +634,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun updateCategorySettings(categoryId: String, hideChecked: Boolean, color: Long) {
+    fun updateCategorySettings(categoryId: String, hideChecked: Boolean, color: Long, autoLearningEnabled: Boolean) {
         viewModelScope.launch {
             val current = categories.value.find { it.id == categoryId } ?: return@launch
-            dao.updateCategory(CategoryEntity(id = categoryId, name = current.name, color = color, storageType = current.settings.type.name, remotePath = null, hideCheckedItems = hideChecked, ownerId = current.ownerId, allowedUsers = current.allowedUsers.joinToString(",")))
+            dao.updateCategory(CategoryEntity(id = categoryId, name = current.name, color = color, storageType = current.settings.type.name, remotePath = null, hideCheckedItems = hideChecked, autoLearningEnabled = autoLearningEnabled, ownerId = current.ownerId, allowedUsers = current.allowedUsers.joinToString(",")))
             if (current.settings.type == StorageType.FIREBASE) {
                 firestore.collection("categories").document(categoryId).update(
                     "color", color,
-                    "hideCheckedItems", hideChecked
+                    "hideCheckedItems", hideChecked,
+                    "autoLearningEnabled", autoLearningEnabled
                 ).await()
             }
         }

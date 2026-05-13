@@ -11,6 +11,7 @@ data class CategoryEntity(
     val storageType: String,
     val remotePath: String?,
     val hideCheckedItems: Boolean,
+    val autoLearningEnabled: Boolean = true,
     val ownerId: String? = null,
     val allowedUsers: String = "" // Als CSV String gespeichert
 )

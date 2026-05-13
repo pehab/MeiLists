@@ -427,8 +427,8 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
         SettingsDialog(
             category = category,
             onDismiss = { showSettingsDialog = null },
-            onSave = { hideChecked, color ->
-                viewModel.updateCategorySettings(category.id, hideChecked, color.toArgb().toLong())
+            onSave = { hideChecked, color, autoLearningEnabled ->
+                viewModel.updateCategorySettings(category.id, hideChecked, color.toArgb().toLong(), autoLearningEnabled)
                 showSettingsDialog = null
             },
             onDelete = {
@@ -782,12 +782,13 @@ fun AddEntryDialog(
 fun SettingsDialog(
     category: Category, 
     onDismiss: () -> Unit, 
-    onSave: (Boolean, Color) -> Unit, 
+    onSave: (Boolean, Color, Boolean) -> Unit, 
     onDelete: () -> Unit,
     viewModel: MainViewModel,
     allCategories: List<Category>
 ) {
     var hideChecked by remember { mutableStateOf(category.settings.hideCheckedItems) }
+    var autoLearningEnabled by remember { mutableStateOf(category.settings.autoLearningEnabled) }
     var selectedColor by remember { mutableStateOf(Color(category.color)) }
     val clipboardManager = LocalClipboardManager.current
     var showDeleteConfirm by remember { mutableStateOf(false) }
@@ -828,6 +829,10 @@ fun SettingsDialog(
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Checkbox(checked = hideChecked, onCheckedChange = { hideChecked = it })
                     Text("Erledigte Einträge ausblenden")
+                }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Checkbox(checked = autoLearningEnabled, onCheckedChange = { autoLearningEnabled = it })
+                    Text("Autolearning aktivieren")
                 }
                 Spacer(Modifier.height(16.dp))
                 Text("Farbe wählen", style = MaterialTheme.typography.labelMedium)
@@ -871,7 +876,7 @@ fun SettingsDialog(
             }
         },
         confirmButton = {
-            Button(onClick = { onSave(hideChecked, selectedColor) }) {
+            Button(onClick = { onSave(hideChecked, selectedColor, autoLearningEnabled) }) {
                 Text("Speichern")
             }
         },

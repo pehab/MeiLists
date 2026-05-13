@@ -9,7 +9,8 @@ enum class StorageType {
 data class StorageSettings(
     val type: StorageType = StorageType.LOCAL,
     val remotePath: String? = null,
-    val hideCheckedItems: Boolean = false
+    val hideCheckedItems: Boolean = false,
+    val autoLearningEnabled: Boolean = true
 )
 
 data class Category(

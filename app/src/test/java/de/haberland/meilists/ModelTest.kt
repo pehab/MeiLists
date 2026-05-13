@@ -7,6 +7,7 @@ import de.haberland.meilists.model.StorageSettings
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ModelTest {
@@ -41,6 +42,7 @@ class ModelTest {
     fun testStorageSettingsDefault() {
         val settings = StorageSettings()
         assertFalse(settings.hideCheckedItems)
+        assertTrue(settings.autoLearningEnabled)
         assertNotNull(settings.type)
     }
 }
