@@ -115,7 +115,7 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
     LaunchedEffect(Unit) {
         viewModel.uiEvent.collect { event ->
             when (event) {
-                is UiEvent.ShowToast -> Toast.makeText(context, "Aktion ausgeführt", Toast.LENGTH_SHORT).show()
+                is UiEvent.ShowToast -> Toast.makeText(context, event.message, Toast.LENGTH_SHORT).show()
                 is UiEvent.UpdateAvailable -> {
                     val appUpdateManager = AppUpdateManagerFactory.create(context)
                     appUpdateManager.startUpdateFlowForResult(

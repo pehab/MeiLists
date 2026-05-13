@@ -28,7 +28,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
 
 sealed class UiEvent {
-    data object ShowToast : UiEvent()
+    data class ShowToast(val message: String) : UiEvent()
     data class UpdateAvailable(val info: AppUpdateInfo) : UiEvent()
 }
 
@@ -109,6 +109,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 if (user != null) {
                     crashlytics.setUserId(user.uid)
                     syncWithFirebase()
+                    // Sofort-Sync für lokal bereits bekannte Kategorien starten
+                    categories.value.filter { it.settings.type == StorageType.FIREBASE }.forEach { 
+                        syncListsForCategory(it.id)
+                    }
                 } else {
                     clearAllListeners()
                 }
@@ -174,14 +178,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     val googleIdTokenCredential = GoogleIdTokenCredential.createFrom(credential.data)
                     val firebaseCredential = GoogleAuthProvider.getCredential(googleIdTokenCredential.idToken, null)
                     auth.signInWithCredential(firebaseCredential).await()
-                    _uiEvent.emit(UiEvent.ShowToast)
+                    _uiEvent.emit(UiEvent.ShowToast("Erfolgreich angemeldet"))
                 }
             } catch (e: NoCredentialException) {
                 Log.d("MeiLists", "Keine Zugangsdaten gefunden: ${e.message}")
             } catch (e: GetCredentialException) {
                 Log.e("MeiLists", "Credential Fehler: ${e.message}")
+                _uiEvent.emit(UiEvent.ShowToast("Anmeldefehler: ${e.message}"))
             } catch (e: Exception) {
                 Log.e("MeiLists", "Login Fehler: ${e.message}")
+                _uiEvent.emit(UiEvent.ShowToast("Login fehlgeschlagen"))
             }
         }
     }
@@ -191,17 +197,23 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             auth.signOut()
             credentialManager.clearCredentialState(ClearCredentialStateRequest())
             clearAllListeners()
-            _uiEvent.emit(UiEvent.ShowToast)
+            _uiEvent.emit(UiEvent.ShowToast("Abgemeldet"))
         }
     }
 
     private fun syncWithFirebase() {
         val user = auth.currentUser ?: return
+        Log.d("MeiLists", "Starte Firebase Sync für User: ${user.uid}")
         
         val categoryListener = firestore.collection("categories")
             .whereArrayContains("allowedUsers", user.uid)
             .addSnapshotListener { snapshot: QuerySnapshot?, e: FirebaseFirestoreException? ->
-                if (e != null || snapshot == null) return@addSnapshotListener
+                if (e != null) {
+                    Log.e("MeiLists", "Kategorien-Sync Fehler: ${e.message}")
+                    viewModelScope.launch { _uiEvent.emit(UiEvent.ShowToast("Fehler beim Laden der Kategorien: ${e.code}")) }
+                    return@addSnapshotListener
+                }
+                if (snapshot == null) return@addSnapshotListener
                 
                 snapshot.documentChanges.forEach { change ->
                     val doc = change.document
@@ -328,27 +340,32 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             val ownerId = user?.uid
             val allowedUsers = ownerId?.let { listOf(it) } ?: emptyList()
             
+            val storageType = if (user != null) StorageType.FIREBASE else StorageType.LOCAL
+            
+            // IMMER lokal speichern (Offline First)
+            dao.insertCategory(CategoryEntity(
+                id = id, 
+                name = name, 
+                color = color, 
+                storageType = storageType.name, 
+                remotePath = null, 
+                hideCheckedItems = false, 
+                ownerId = ownerId, 
+                allowedUsers = allowedUsers.joinToString(",")
+            ))
+
             if (user != null) {
-                // Bei Firebase-Kategorien lassen wir den Snapshot-Listener das lokale Insert übernehmen
-                firestore.collection("categories").document(id).set(hashMapOf(
-                    "name" to name, 
-                    "color" to color, 
-                    "ownerId" to ownerId, 
-                    "allowedUsers" to allowedUsers, 
-                    "hideCheckedItems" to false
-                )).await()
-            } else {
-                // Nur lokal speichern
-                dao.insertCategory(CategoryEntity(
-                    id = id, 
-                    name = name, 
-                    color = color, 
-                    storageType = StorageType.LOCAL.name, 
-                    remotePath = null, 
-                    hideCheckedItems = false, 
-                    ownerId = ownerId, 
-                    allowedUsers = allowedUsers.joinToString(",")
-                ))
+                try {
+                    firestore.collection("categories").document(id).set(hashMapOf(
+                        "name" to name, 
+                        "color" to color, 
+                        "ownerId" to ownerId, 
+                        "allowedUsers" to allowedUsers, 
+                        "hideCheckedItems" to false
+                    )).await()
+                } catch (e: Exception) {
+                    Log.e("MeiLists", "Fehler beim Firebase-Sync (Category): ${e.message}")
+                }
             }
             
             if (importSourceId != null) {
@@ -365,15 +382,19 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             val category = categories.value.find { it.id == categoryId } ?: return@launch
             
             if (user != null && category.settings.type == StorageType.FIREBASE) {
-                if (category.ownerId == user.uid) {
-                    firestore.collection("categories").document(categoryId).delete().await()
-                } else {
-                    firestore.collection("categories").document(categoryId).update("allowedUsers", FieldValue.arrayRemove(user.uid)).await()
+                try {
+                    if (category.ownerId == user.uid) {
+                        firestore.collection("categories").document(categoryId).delete().await()
+                    } else {
+                        firestore.collection("categories").document(categoryId).update("allowedUsers", FieldValue.arrayRemove(user.uid)).await()
+                    }
+                } catch (e: Exception) {
+                    Log.e("MeiLists", "Fehler beim Firebase-Delete (Category): ${e.message}")
                 }
             }
             removeLocalCategory(categoryId)
             if (_selectedCategoryId.value == categoryId) selectCategory(null)
-            _uiEvent.emit(UiEvent.ShowToast)
+            _uiEvent.emit(UiEvent.ShowToast("Kategorie gelöscht"))
         }
     }
 
@@ -392,7 +413,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val areaListener = firestore.collection("catalog_areas")
             .whereEqualTo("categoryId", categoryId)
             .addSnapshotListener { snapshot, e ->
-                if (e != null || snapshot == null) return@addSnapshotListener
+                if (e != null) {
+                    Log.e("MeiLists", "Katalog-Sync Fehler (Bereiche) für $categoryId: ${e.message}")
+                    if (e.code == FirebaseFirestoreException.Code.PERMISSION_DENIED) {
+                        viewModelScope.launch { _uiEvent.emit(UiEvent.ShowToast("Kein Zugriff auf Katalog-Bereiche. Bitte Firestore-Regeln prüfen.")) }
+                    }
+                    return@addSnapshotListener
+                }
+                if (snapshot == null) return@addSnapshotListener
+                
                 snapshot.documentChanges.forEach { change ->
                     val doc = change.document
                     when (change.type) {
@@ -412,7 +441,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val productListener = firestore.collection("catalog_products")
             .whereEqualTo("categoryId", categoryId)
             .addSnapshotListener { snapshot, e ->
-                if (e != null || snapshot == null) return@addSnapshotListener
+                if (e != null) {
+                    Log.e("MeiLists", "Katalog-Sync Fehler (Produkte) für $categoryId: ${e.message}")
+                    if (e.code == FirebaseFirestoreException.Code.PERMISSION_DENIED) {
+                        viewModelScope.launch { _uiEvent.emit(UiEvent.ShowToast("Kein Zugriff auf Katalog-Produkte. Bitte Firestore-Regeln prüfen.")) }
+                    }
+                    return@addSnapshotListener
+                }
+                if (snapshot == null) return@addSnapshotListener
+
                 snapshot.documentChanges.forEach { change ->
                     val doc = change.document
                     when (change.type) {
@@ -446,35 +483,70 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             // Auto-Learning: Produkt in den Katalog aufnehmen, falls neu
             updateCatalogWithNewItem(list.categoryId, text, area)
 
+            // IMMER lokal speichern (Offline First)
+            dao.insertItem(ListItemEntity(id, listId, text, false, timestamp, area))
+
             if (category?.settings?.type == StorageType.FIREBASE) {
-                // Bei Firebase-Listen lassen wir den Snapshot-Listener das lokale Insert übernehmen
-                // Das verhindert, dass wir lokal einfügen UND der Listener fast gleichzeitig triggert
-                firestore.collection("list_items").document(id).set(hashMapOf(
-                    "listId" to listId, 
-                    "text" to text, 
-                    "isChecked" to false, 
-                    "timestamp" to timestamp,
-                    "area" to area
-                )).await()
-            } else {
-                // Bei lokalen Listen direkt in Room
-                dao.insertItem(ListItemEntity(id, listId, text, false, timestamp, area))
+                try {
+                    firestore.collection("list_items").document(id).set(hashMapOf(
+                        "listId" to listId, 
+                        "text" to text, 
+                        "isChecked" to false, 
+                        "timestamp" to timestamp,
+                        "area" to area
+                    )).await()
+                } catch (e: Exception) {
+                    Log.e("MeiLists", "Fehler beim Firebase-Sync (Item): ${e.message}")
+                }
             }
         }
     }
 
     private suspend fun updateCatalogWithNewItem(categoryId: String, text: String, area: String?) {
+        val category = categories.value.find { it.id == categoryId }
+        val isFirebase = category?.settings?.type == StorageType.FIREBASE
+
         // Bereich speichern, falls neu
         if (!area.isNullOrBlank()) {
             val existingArea = dao.getAreaByName(categoryId, area)
+            val areaId = existingArea?.id ?: java.util.UUID.randomUUID().toString()
+            
             if (existingArea == null) {
-                addCatalogArea(categoryId, area)
+                dao.insertCatalogArea(CatalogAreaEntity(areaId, categoryId, area))
+            }
+            
+            if (isFirebase) {
+                try {
+                    firestore.collection("catalog_areas").document(areaId).set(hashMapOf(
+                        "categoryId" to categoryId,
+                        "name" to area
+                    )).await()
+                } catch (e: Exception) {
+                    Log.e("MeiLists", "Katalog-Sync Fehler (Area): ${e.message}")
+                }
             }
         }
 
+        // Produkt speichern
         val existingProduct = dao.getProductByName(categoryId, text)
+        val productId = existingProduct?.id ?: java.util.UUID.randomUUID().toString()
+        
         if (existingProduct == null) {
-            addCatalogProduct(categoryId, text, area)
+            dao.insertCatalogProduct(CatalogProductEntity(productId, categoryId, text, area))
+        }
+
+        if (isFirebase) {
+            try {
+                firestore.collection("catalog_products").document(productId).set(hashMapOf(
+                    "categoryId" to categoryId,
+                    "name" to text,
+                    "defaultArea" to area
+                )).await()
+                Log.d("MeiLists", "Produkt erfolgreich nach Firebase synchronisiert: $text")
+            } catch (e: Exception) {
+                Log.e("MeiLists", "Katalog-Sync Fehler (Product): ${e.message}")
+                _uiEvent.emit(UiEvent.ShowToast("Fehler beim Hochladen von $text"))
+            }
         }
     }
 
@@ -486,7 +558,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             val list = lists.value.find { it.id == item.listId }
             val category = categories.value.find { it.id == list?.categoryId }
             if (category?.settings?.type == StorageType.FIREBASE) {
-                firestore.collection("list_items").document(itemId).update("isChecked", newChecked).await()
+                try {
+                    firestore.collection("list_items").document(itemId).update("isChecked", newChecked).await()
+                } catch (e: Exception) {
+                    Log.e("MeiLists", "Fehler beim Firebase-Update (Item): ${e.message}")
+                }
             }
         }
     }
@@ -498,10 +574,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             val list = lists.value.find { it.id == item.listId }
             val category = categories.value.find { it.id == list?.categoryId }
             if (category?.settings?.type == StorageType.FIREBASE) {
-                firestore.collection("list_items").document(itemId).update(mapOf(
-                    "text" to newText,
-                    "area" to newArea
-                )).await()
+                try {
+                    firestore.collection("list_items").document(itemId).update(mapOf(
+                        "text" to newText,
+                        "area" to newArea
+                    )).await()
+                } catch (e: Exception) {
+                    Log.e("MeiLists", "Fehler beim Firebase-Update (Item): ${e.message}")
+                }
             }
         }
     }
@@ -513,7 +593,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             val list = lists.value.find { it.id == item.listId }
             val category = categories.value.find { it.id == list?.categoryId }
             if (category?.settings?.type == StorageType.FIREBASE) {
-                firestore.collection("list_items").document(itemId).delete().await()
+                try {
+                    firestore.collection("list_items").document(itemId).delete().await()
+                } catch (e: Exception) {
+                    Log.e("MeiLists", "Fehler beim Firebase-Delete (Item): ${e.message}")
+                }
             }
         }
     }
@@ -535,11 +619,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             val user = auth.currentUser ?: return@launch
             try {
                 firestore.collection("categories").document(inviteCode).update("allowedUsers", FieldValue.arrayUnion(user.uid)).await()
-                _uiEvent.emit(UiEvent.ShowToast)
+                _uiEvent.emit(UiEvent.ShowToast("Kategorie beigetreten"))
                 selectCategory(inviteCode)
             } catch (e: Exception) {
                 Log.e("MeiLists", "Join Fehler: ${e.message}")
-                _uiEvent.emit(UiEvent.ShowToast)
+                _uiEvent.emit(UiEvent.ShowToast("Fehler beim Beitreten: ${e.message}"))
             }
         }
     }
@@ -563,13 +647,20 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             val id = java.util.UUID.randomUUID().toString()
             val category = categories.value.find { it.id == categoryId }
+            
+            // Lokal speichern
+            dao.insertCatalogArea(CatalogAreaEntity(id, categoryId, name))
+            
+            // Firebase-Sync
             if (category?.settings?.type == StorageType.FIREBASE) {
-                firestore.collection("catalog_areas").document(id).set(hashMapOf(
-                    "categoryId" to categoryId,
-                    "name" to name
-                ))
-            } else {
-                dao.insertCatalogArea(CatalogAreaEntity(id, categoryId, name))
+                try {
+                    firestore.collection("catalog_areas").document(id).set(hashMapOf(
+                        "categoryId" to categoryId,
+                        "name" to name
+                    )).await()
+                } catch (e: Exception) {
+                    Log.e("MeiLists", "Fehler beim Firebase-Sync (CatalogArea): ${e.message}")
+                }
             }
         }
     }
@@ -577,38 +668,48 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun renameCatalogArea(categoryId: String, areaId: String, oldName: String, newName: String) {
         viewModelScope.launch {
             val category = categories.value.find { it.id == categoryId }
-            if (category?.settings?.type == StorageType.FIREBASE) {
-                firestore.collection("catalog_areas").document(areaId).update("name", newName)
-                // Kaskadierendes Update in Firebase (manuell für alle Produkte/Items)
-                val products = firestore.collection("catalog_products")
-                    .whereEqualTo("categoryId", categoryId)
-                    .whereEqualTo("defaultArea", oldName).get().await()
-                products.documents.forEach { it.reference.update("defaultArea", newName) }
-                
-                // Hinweis: Items in Listen sind viele, hier ggf. nur lokal oder über Cloud Functions.
-                // Wir machen es hier erst mal lokal via Room (Sync zieht es dann glatt)
-            } else {
-                dao.insertCatalogArea(CatalogAreaEntity(areaId, categoryId, newName))
-            }
+            
+            // Lokal zuerst
+            dao.insertCatalogArea(CatalogAreaEntity(areaId, categoryId, newName))
             dao.updateAreaInProducts(categoryId, oldName, newName)
             dao.updateAreaInItems(categoryId, oldName, newName)
+            
+            if (category?.settings?.type == StorageType.FIREBASE) {
+                try {
+                    firestore.collection("catalog_areas").document(areaId).update("name", newName).await()
+                    
+                    // Kaskadierendes Update in Firebase
+                    val products = firestore.collection("catalog_products")
+                        .whereEqualTo("categoryId", categoryId)
+                        .whereEqualTo("defaultArea", oldName).get().await()
+                    products.documents.forEach { it.reference.update("defaultArea", newName) }
+                } catch (e: Exception) {
+                    Log.e("MeiLists", "Fehler beim Firebase-Sync (RenameArea): ${e.message}")
+                }
+            }
         }
     }
 
     fun deleteCatalogArea(categoryId: String, areaId: String, areaName: String) {
         viewModelScope.launch {
             val category = categories.value.find { it.id == categoryId }
-            if (category?.settings?.type == StorageType.FIREBASE) {
-                firestore.collection("catalog_areas").document(areaId).delete()
-                val products = firestore.collection("catalog_products")
-                    .whereEqualTo("categoryId", categoryId)
-                    .whereEqualTo("defaultArea", areaName).get().await()
-                products.documents.forEach { it.reference.update("defaultArea", null) }
-            } else {
-                dao.deleteCatalogArea(areaId)
-            }
+            
+            // Lokal
+            dao.deleteCatalogArea(areaId)
             dao.updateAreaInProducts(categoryId, areaName, null)
             dao.updateAreaInItems(categoryId, areaName, null)
+            
+            if (category?.settings?.type == StorageType.FIREBASE) {
+                try {
+                    firestore.collection("catalog_areas").document(areaId).delete().await()
+                    val products = firestore.collection("catalog_products")
+                        .whereEqualTo("categoryId", categoryId)
+                        .whereEqualTo("defaultArea", areaName).get().await()
+                    products.documents.forEach { it.reference.update("defaultArea", null) }
+                } catch (e: Exception) {
+                    Log.e("MeiLists", "Fehler beim Firebase-Sync (DeleteArea): ${e.message}")
+                }
+            }
         }
     }
 
@@ -616,14 +717,21 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             val id = java.util.UUID.randomUUID().toString()
             val category = categories.value.find { it.id == categoryId }
+            
+            // Lokal
+            dao.insertCatalogProduct(CatalogProductEntity(id, categoryId, name, area))
+            
+            // Firebase
             if (category?.settings?.type == StorageType.FIREBASE) {
-                firestore.collection("catalog_products").document(id).set(hashMapOf(
-                    "categoryId" to categoryId,
-                    "name" to name,
-                    "defaultArea" to area
-                ))
-            } else {
-                dao.insertCatalogProduct(CatalogProductEntity(id, categoryId, name, area))
+                try {
+                    firestore.collection("catalog_products").document(id).set(hashMapOf(
+                        "categoryId" to categoryId,
+                        "name" to name,
+                        "defaultArea" to area
+                    )).await()
+                } catch (e: Exception) {
+                    Log.e("MeiLists", "Fehler beim Firebase-Sync (AddProduct): ${e.message}")
+                }
             }
         }
     }
@@ -631,13 +739,20 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun updateCatalogProduct(categoryId: String, productId: String, newName: String, newArea: String?) {
         viewModelScope.launch {
             val category = categories.value.find { it.id == categoryId }
+            
+            // Lokal
+            dao.insertCatalogProduct(CatalogProductEntity(productId, categoryId, newName, newArea))
+            
+            // Firebase
             if (category?.settings?.type == StorageType.FIREBASE) {
-                firestore.collection("catalog_products").document(productId).update(mapOf(
-                    "name" to newName,
-                    "defaultArea" to newArea
-                ))
-            } else {
-                dao.insertCatalogProduct(CatalogProductEntity(productId, categoryId, newName, newArea))
+                try {
+                    firestore.collection("catalog_products").document(productId).update(mapOf(
+                        "name" to newName,
+                        "defaultArea" to newArea
+                    )).await()
+                } catch (e: Exception) {
+                    Log.e("MeiLists", "Fehler beim Firebase-Sync (UpdateProduct): ${e.message}")
+                }
             }
         }
     }
@@ -645,10 +760,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun deleteCatalogProduct(categoryId: String, productId: String) {
         viewModelScope.launch {
             val category = categories.value.find { it.id == categoryId }
+            
+            // Lokal
+            dao.deleteCatalogProduct(productId)
+            
+            // Firebase
             if (category?.settings?.type == StorageType.FIREBASE) {
-                firestore.collection("catalog_products").document(productId).delete()
-            } else {
-                dao.deleteCatalogProduct(productId)
+                try {
+                    firestore.collection("catalog_products").document(productId).delete().await()
+                } catch (e: Exception) {
+                    Log.e("MeiLists", "Fehler beim Firebase-Sync (DeleteProduct): ${e.message}")
+                }
             }
         }
     }
@@ -708,17 +830,21 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             val timestamp = System.currentTimeMillis()
             
             val category = categories.value.find { it.id == categoryId }
+            
+            // IMMER lokal speichern (Offline First)
+            dao.insertList(ShoppingListEntity(id, categoryId, name, false, timestamp))
+
             if (category?.settings?.type == StorageType.FIREBASE) {
-                // Bei Firebase-Listen lassen wir den Snapshot-Listener das lokale Insert übernehmen
-                firestore.collection("shopping_lists").document(id).set(hashMapOf(
-                    "categoryId" to categoryId, 
-                    "name" to name,
-                    "sortByArea" to false,
-                    "timestamp" to timestamp
-                )).await()
-            } else {
-                // Nur lokal speichern
-                dao.insertList(ShoppingListEntity(id, categoryId, name, false, timestamp))
+                try {
+                    firestore.collection("shopping_lists").document(id).set(hashMapOf(
+                        "categoryId" to categoryId, 
+                        "name" to name,
+                        "sortByArea" to false,
+                        "timestamp" to timestamp
+                    )).await()
+                } catch (e: Exception) {
+                    Log.e("MeiLists", "Fehler beim Firebase-Sync (List): ${e.message}")
+                }
             }
             selectList(id)
         }
@@ -730,7 +856,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             val category = categories.value.find { it.id == list.categoryId }
             dao.insertList(ShoppingListEntity(id = listId, categoryId = list.categoryId, name = newName, sortByArea = list.sortByArea, timestamp = list.timestamp))
             if (category?.settings?.type == StorageType.FIREBASE) {
-                firestore.collection("shopping_lists").document(listId).update("name", newName).await()
+                try {
+                    firestore.collection("shopping_lists").document(listId).update("name", newName).await()
+                } catch (e: Exception) {
+                    Log.e("MeiLists", "Fehler beim Firebase-Rename (List): ${e.message}")
+                }
             }
         }
     }
@@ -742,7 +872,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             dao.insertList(ShoppingListEntity(id = listId, categoryId = list.categoryId, name = list.name, sortByArea = newValue, timestamp = list.timestamp))
             val category = categories.value.find { it.id == list.categoryId }
             if (category?.settings?.type == StorageType.FIREBASE) {
-                firestore.collection("shopping_lists").document(listId).update("sortByArea", newValue).await()
+                try {
+                    firestore.collection("shopping_lists").document(listId).update("sortByArea", newValue).await()
+                } catch (e: Exception) {
+                    Log.e("MeiLists", "Fehler beim Firebase-Update (List Sort): ${e.message}")
+                }
             }
         }
     }
@@ -752,10 +886,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             val list = lists.value.find { it.id == listId } ?: return@launch
             val category = categories.value.find { it.id == list.categoryId }
             if (auth.currentUser != null && category?.settings?.type == StorageType.FIREBASE) {
-                firestore.collection("shopping_lists").document(listId).delete().await()
+                try {
+                    firestore.collection("shopping_lists").document(listId).delete().await()
+                } catch (e: Exception) {
+                    Log.e("MeiLists", "Fehler beim Firebase-Delete (List): ${e.message}")
+                }
             }
             removeLocalList(listId)
-            _uiEvent.emit(UiEvent.ShowToast)
+            _uiEvent.emit(UiEvent.ShowToast("Liste gelöscht"))
         }
     }
 }
