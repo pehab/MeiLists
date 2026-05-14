@@ -15,6 +15,11 @@ import de.haberland.meilists.model.CatalogArea
 import de.haberland.meilists.model.CatalogProduct
 import de.haberland.meilists.model.Category
 import de.haberland.meilists.model.ListItem
+import de.haberland.meilists.ui.components.ListItemRow
+import de.haberland.meilists.ui.dialogs.AddEntryDialog
+import de.haberland.meilists.ui.dialogs.AddType
+import de.haberland.meilists.ui.dialogs.JoinCategoryDialog
+import de.haberland.meilists.ui.dialogs.SettingsDialog
 import de.haberland.meilists.ui.theme.MeiListsTheme
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue

@@ -1,4 +1,4 @@
-package de.haberland.meilists
+package de.haberland.meilists.domain
 
 import de.haberland.meilists.model.ListItem
 import de.haberland.meilists.model.ShoppingList
@@ -22,19 +22,21 @@ fun filteredAndSortedItemsForDisplay(
     return items
         .filter { it.listId == listId }
         .filter { !it.isChecked || !hideCheckedItems }
-        .sortedWith { a, b ->
-            if (a.isChecked != b.isChecked) return@sortedWith a.isChecked.compareTo(b.isChecked)
+        .sortedWith { first, second ->
+            if (first.isChecked != second.isChecked) {
+                return@sortedWith first.isChecked.compareTo(second.isChecked)
+            }
 
             if (sortByArea) {
-                val areaA = a.area ?: ""
-                val areaB = b.area ?: ""
-                if (areaA != areaB) {
-                    if (areaA.isEmpty()) return@sortedWith 1
-                    if (areaB.isEmpty()) return@sortedWith -1
-                    return@sortedWith areaA.compareTo(areaB)
+                val firstArea = first.area ?: ""
+                val secondArea = second.area ?: ""
+                if (firstArea != secondArea) {
+                    if (firstArea.isEmpty()) return@sortedWith 1
+                    if (secondArea.isEmpty()) return@sortedWith -1
+                    return@sortedWith firstArea.compareTo(secondArea)
                 }
             }
 
-            b.timestamp.compareTo(a.timestamp)
+            second.timestamp.compareTo(first.timestamp)
         }
 }

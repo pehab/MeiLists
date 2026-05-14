@@ -1,5 +1,7 @@
 package de.haberland.meilists
 
+import de.haberland.meilists.domain.filteredAndSortedItemsForDisplay
+import de.haberland.meilists.domain.sortedListsForCategory
 import de.haberland.meilists.model.ListItem
 import de.haberland.meilists.model.ShoppingList
 import org.junit.Assert.assertEquals
