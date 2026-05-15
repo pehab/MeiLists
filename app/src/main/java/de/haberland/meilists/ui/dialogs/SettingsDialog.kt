@@ -59,9 +59,9 @@ fun SettingsDialog(
     catalogProducts: List<CatalogProduct> = emptyList(),
     catalogActions: CatalogManagerActions? = null
 ) {
-    var hideChecked by remember { mutableStateOf(category.settings.hideCheckedItems) }
-    var autoLearningEnabled by remember { mutableStateOf(category.settings.autoLearningEnabled) }
-    var selectedColor by remember { mutableStateOf(Color(category.color)) }
+    var hideChecked by remember(category.id) { mutableStateOf(category.settings.hideCheckedItems) }
+    var autoLearningEnabled by remember(category.id) { mutableStateOf(category.settings.autoLearningEnabled) }
+    var selectedColor by remember(category.id) { mutableStateOf(Color(category.color)) }
     val clipboard = LocalClipboard.current
     val coroutineScope = rememberCoroutineScope()
     var showDeleteConfirm by remember { mutableStateOf(false) }

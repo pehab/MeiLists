@@ -43,11 +43,27 @@
       },
       "oauth_client": [
         {
-          "client_id": "66101709976-9mj26ljbol6phpi2tonv6utti99llak3.apps.googleusercontent.com",
+          "client_id": "66101709976-85ob932p97ebnlkv4ingb3vqq34jpaqu.apps.googleusercontent.com",
           "client_type": 1,
           "android_info": {
             "package_name": "de.haberland.meilists",
-            "certificate_hash": "5e8f16062ecbcdfb5e649336209c1d30a5a8140e"
+            "certificate_hash": "cbfd0a082ed3a69a1eda0f781a7fc63074a34a72"
+          }
+        },
+        {
+          "client_id": "66101709976-nb2oijg0o5qecehln1o65hl7b18gbrkv.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "de.haberland.meilists",
+            "certificate_hash": "f9fbbbfbb71404644a71a3c3aed3518e4ecd9582"
+          }
+        },
+        {
+          "client_id": "66101709976-scq7up06ofpph2ps4du48t14oghtb9ep.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "de.haberland.meilists",
+            "certificate_hash": "8ad61a60e614e44316d19e18f9b7ab39952e4948"
           }
         },
         {

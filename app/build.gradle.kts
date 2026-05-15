@@ -1,3 +1,5 @@
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
@@ -5,6 +7,24 @@ plugins {
     alias(libs.plugins.google.services)
     alias(libs.plugins.firebase.crashlytics)
 }
+
+val localProperties = Properties().apply {
+    val localPropertiesFile = rootProject.file("local.properties")
+    if (localPropertiesFile.isFile) {
+        localPropertiesFile.inputStream().use(::load)
+    }
+}
+
+fun localProperty(name: String): String? = localProperties.getProperty(name)?.takeIf { it.isNotBlank() }
+
+val meilistsStoreFile = localProperty("meilists.signing.storeFile")?.let { file(it) }
+val meilistsStorePassword = localProperty("meilists.signing.storePassword")
+val meilistsKeyAlias = localProperty("meilists.signing.keyAlias")
+val meilistsKeyPassword = localProperty("meilists.signing.keyPassword") ?: meilistsStorePassword
+val hasMeilistsSigning = meilistsStoreFile?.isFile == true &&
+        meilistsStorePassword != null &&
+        meilistsKeyAlias != null &&
+        meilistsKeyPassword != null
 
 android {
     namespace = "de.haberland.meilists"
@@ -24,8 +44,28 @@ android {
         }
     }
 
+    signingConfigs {
+        if (hasMeilistsSigning) {
+            create("meilists") {
+                storeFile = requireNotNull(meilistsStoreFile)
+                storePassword = requireNotNull(meilistsStorePassword)
+                keyAlias = requireNotNull(meilistsKeyAlias)
+                keyPassword = requireNotNull(meilistsKeyPassword)
+            }
+        }
+    }
+
     buildTypes {
+        debug {
+            if (hasMeilistsSigning) {
+                signingConfig = signingConfigs.getByName("meilists")
+            }
+        }
+
         release {
+            if (hasMeilistsSigning) {
+                signingConfig = signingConfigs.getByName("meilists")
+            }
             isMinifyEnabled = false
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),

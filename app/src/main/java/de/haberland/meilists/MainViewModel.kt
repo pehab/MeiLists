@@ -79,17 +79,25 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     val catalogAreas: StateFlow<List<CatalogArea>> = selectedCategoryId.flatMapLatest { catId ->
         if (catId == null) flowOf(emptyList())
-        else dao.getCatalogAreas(catId).map { entities ->
-            entities.map { CatalogArea(it.id, it.categoryId, it.name) }
-        }
+        else catalogAreasFor(catId)
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     val catalogProducts: StateFlow<List<CatalogProduct>> = selectedCategoryId.flatMapLatest { catId ->
         if (catId == null) flowOf(emptyList())
-        else dao.getCatalogProducts(catId).map { entities ->
+        else catalogProductsFor(catId)
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    fun catalogAreasFor(categoryId: String): Flow<List<CatalogArea>> {
+        return dao.getCatalogAreas(categoryId).map { entities ->
+            entities.map { CatalogArea(it.id, it.categoryId, it.name) }
+        }
+    }
+
+    fun catalogProductsFor(categoryId: String): Flow<List<CatalogProduct>> {
+        return dao.getCatalogProducts(categoryId).map { entities ->
             entities.map { CatalogProduct(it.id, it.categoryId, it.name, it.defaultArea) }
         }
-    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+    }
 
     val lists: StateFlow<List<ShoppingList>> = dao.getAllLists()
         .map { entities ->
