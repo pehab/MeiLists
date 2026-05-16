@@ -600,6 +600,57 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun moveItem(itemId: String, targetListId: String) {
+        viewModelScope.launch {
+            val item = items.value.find { it.id == itemId } ?: return@launch
+            if (item.listId == targetListId) return@launch
+
+            val sourceList = lists.value.find { it.id == item.listId } ?: return@launch
+            val targetList = lists.value.find { it.id == targetListId } ?: return@launch
+            val sourceCategory = categories.value.find { it.id == sourceList.categoryId }
+            val targetCategory = categories.value.find { it.id == targetList.categoryId }
+            val sourceIsFirebase = sourceCategory?.settings?.type == StorageType.FIREBASE
+            val targetIsFirebase = targetCategory?.settings?.type == StorageType.FIREBASE
+            val targetItemId = if (sourceIsFirebase && !targetIsFirebase) {
+                java.util.UUID.randomUUID().toString()
+            } else {
+                item.id
+            }
+
+            if (sourceIsFirebase && !targetIsFirebase) {
+                dao.deleteItem(item.id)
+                dao.insertItem(ListItemEntity(targetItemId, targetListId, item.text, item.isChecked, item.timestamp, item.area))
+            } else {
+                dao.updateItem(ListItemEntity(targetItemId, targetListId, item.text, item.isChecked, item.timestamp, item.area))
+            }
+
+            if (sourceList.categoryId != targetList.categoryId && targetCategory?.settings?.autoLearningEnabled == true) {
+                updateCatalogWithNewItem(targetList.categoryId, item.text, item.area)
+            }
+
+            try {
+                when {
+                    targetIsFirebase -> {
+                        syncItemsForList(targetListId)
+                        firestore.collection("list_items").document(targetItemId).set(hashMapOf(
+                            "listId" to targetListId,
+                            "text" to item.text,
+                            "isChecked" to item.isChecked,
+                            "timestamp" to item.timestamp,
+                            "area" to item.area
+                        )).await()
+                    }
+                    sourceIsFirebase -> {
+                        firestore.collection("list_items").document(item.id).delete().await()
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e("MeiLists", "Fehler beim Firebase-Move (Item): ${e.message}")
+                _uiEvent.emit(UiEvent.ShowToast("Eintrag lokal verschoben, Sync fehlgeschlagen"))
+            }
+        }
+    }
+
     fun deleteItem(itemId: String) {
         viewModelScope.launch {
             val item = items.value.find { it.id == itemId } ?: return@launch

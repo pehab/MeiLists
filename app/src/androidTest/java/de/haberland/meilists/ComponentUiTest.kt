@@ -15,10 +15,12 @@ import de.haberland.meilists.model.CatalogArea
 import de.haberland.meilists.model.CatalogProduct
 import de.haberland.meilists.model.Category
 import de.haberland.meilists.model.ListItem
+import de.haberland.meilists.model.ShoppingList
 import de.haberland.meilists.ui.components.ListItemRow
 import de.haberland.meilists.ui.dialogs.AddEntryDialog
 import de.haberland.meilists.ui.dialogs.AddType
 import de.haberland.meilists.ui.dialogs.JoinCategoryDialog
+import de.haberland.meilists.ui.dialogs.MoveItemDialog
 import de.haberland.meilists.ui.dialogs.SettingsDialog
 import de.haberland.meilists.ui.theme.MeiListsTheme
 import org.junit.Assert.assertEquals
@@ -35,6 +37,7 @@ class ComponentUiTest {
     fun listItemRowDisplaysAreaAndInvokesCallbacks() {
         var checkedValue: Boolean? = null
         var editClicked = false
+        var moveClicked = false
         var deleteClicked = false
 
         composeTestRule.setContent {
@@ -50,6 +53,7 @@ class ComponentUiTest {
                     ),
                     onCheckedChange = { checkedValue = it },
                     onEditClick = { editClicked = true },
+                    onMoveClick = { moveClicked = true },
                     onDeleteClick = { deleteClicked = true }
                 )
             }
@@ -60,11 +64,13 @@ class ComponentUiTest {
 
         composeTestRule.onAllNodes(isToggleable())[0].performClick()
         composeTestRule.onNodeWithContentDescription("Bearbeiten").performClick()
+        composeTestRule.onNodeWithContentDescription("Verschieben").performClick()
         composeTestRule.onNodeWithContentDescription("Löschen").performClick()
 
         composeTestRule.runOnIdle {
             assertEquals(true, checkedValue)
             assertTrue(editClicked)
+            assertTrue(moveClicked)
             assertTrue(deleteClicked)
         }
     }
@@ -133,6 +139,38 @@ class ComponentUiTest {
         composeTestRule.runOnIdle {
             assertEquals(false, savedHideChecked)
             assertEquals(false, savedAutoLearning)
+        }
+    }
+
+    @Test
+    fun moveItemDialogSubmitsSelectedTargetList() {
+        var targetListId: String? = null
+
+        composeTestRule.setContent {
+            MeiListsTheme {
+                MoveItemDialog(
+                    listItem = ListItem(id = "item1", listId = "weekly", text = "Milk"),
+                    categories = listOf(
+                        Category(id = "groceries", name = "Groceries"),
+                        Category(id = "hardware", name = "Hardware")
+                    ),
+                    lists = listOf(
+                        ShoppingList(id = "weekly", categoryId = "groceries", name = "Weekly"),
+                        ShoppingList(id = "party", categoryId = "groceries", name = "Party"),
+                        ShoppingList(id = "tools", categoryId = "hardware", name = "Tools")
+                    ),
+                    onDismiss = {},
+                    onConfirm = { targetListId = it }
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithText("Aktuelle Liste").assertIsDisplayed()
+        composeTestRule.onNodeWithText("Party").performClick()
+        composeTestRule.onNodeWithText("Verschieben").performClick()
+
+        composeTestRule.runOnIdle {
+            assertEquals("party", targetListId)
         }
     }
 

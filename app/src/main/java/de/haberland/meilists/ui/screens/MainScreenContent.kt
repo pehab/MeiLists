@@ -39,6 +39,7 @@ fun MainScreenContent(
     onAddListClick: () -> Unit,
     onToggleItem: (String) -> Unit,
     onEditItem: (ListItem) -> Unit,
+    onMoveItem: (ListItem) -> Unit,
     onDeleteItem: (String) -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -55,6 +56,7 @@ fun MainScreenContent(
                 items = items,
                 onToggleItem = onToggleItem,
                 onEditItem = onEditItem,
+                onMoveItem = onMoveItem,
                 onDeleteItem = onDeleteItem
             )
         } else {
@@ -106,6 +108,7 @@ private fun ShoppingItemsList(
     items: List<ListItem>,
     onToggleItem: (String) -> Unit,
     onEditItem: (ListItem) -> Unit,
+    onMoveItem: (ListItem) -> Unit,
     onDeleteItem: (String) -> Unit
 ) {
     LazyColumn(modifier = Modifier.fillMaxSize()) {
@@ -114,6 +117,7 @@ private fun ShoppingItemsList(
                 item = item,
                 onCheckedChange = { onToggleItem(item.id) },
                 onEditClick = { onEditItem(item) },
+                onMoveClick = { onMoveItem(item) },
                 onDeleteClick = { onDeleteItem(item.id) }
             )
         }

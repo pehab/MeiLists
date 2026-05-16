@@ -34,6 +34,7 @@ import de.haberland.meilists.ui.dialogs.CatalogManagerActions
 import de.haberland.meilists.ui.dialogs.DeleteListDialog
 import de.haberland.meilists.ui.dialogs.EditItemDialog
 import de.haberland.meilists.ui.dialogs.JoinCategoryDialog
+import de.haberland.meilists.ui.dialogs.MoveItemDialog
 import de.haberland.meilists.ui.dialogs.RenameListDialog
 import de.haberland.meilists.ui.dialogs.SettingsDialog
 import kotlinx.coroutines.launch
@@ -60,6 +61,7 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
     var showDeleteListConfirm by remember { mutableStateOf(false) }
     var showRenameListDialog by remember { mutableStateOf(false) }
     var editingItem by remember { mutableStateOf<ListItem?>(null) }
+    var movingItem by remember { mutableStateOf<ListItem?>(null) }
 
     val currentCategory = categories.find { it.id == selectedCategoryId }
     val categoryLists = sortedListsForCategory(lists, selectedCategoryId)
@@ -172,6 +174,7 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
                 onAddListClick = { showAddDialog = AddType.LIST },
                 onToggleItem = { itemId -> viewModel.toggleItem(itemId) },
                 onEditItem = { item -> editingItem = item },
+                onMoveItem = { item -> movingItem = item },
                 onDeleteItem = { itemId -> viewModel.deleteItem(itemId) },
                 modifier = Modifier.padding(innerPadding)
             )
@@ -280,6 +283,19 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
             onConfirm = { text, area ->
                 viewModel.updateItem(item.id, text, area)
                 editingItem = null
+            }
+        )
+    }
+
+    movingItem?.let { item ->
+        MoveItemDialog(
+            listItem = item,
+            categories = categories,
+            lists = lists,
+            onDismiss = { movingItem = null },
+            onConfirm = { targetListId ->
+                viewModel.moveItem(item.id, targetListId)
+                movingItem = null
             }
         )
     }

@@ -1,7 +1,9 @@
 package de.haberland.meilists
 
 import de.haberland.meilists.domain.filteredAndSortedItemsForDisplay
+import de.haberland.meilists.domain.moveItemTargets
 import de.haberland.meilists.domain.sortedListsForCategory
+import de.haberland.meilists.model.Category
 import de.haberland.meilists.model.ListItem
 import de.haberland.meilists.model.ShoppingList
 import org.junit.Assert.assertEquals
@@ -115,6 +117,24 @@ class ListDisplayLogicTest {
         )
 
         assertTrue(result.isEmpty())
+    }
+
+    @Test
+    fun moveItemTargetsPutCurrentCategoryFirstAndMarkCurrentList() {
+        val categories = listOf(
+            Category(id = "cat2", name = "Hardware"),
+            Category(id = "cat1", name = "Groceries")
+        )
+        val lists = listOf(
+            ShoppingList(id = "other-category", categoryId = "cat2", name = "Hardware", timestamp = 1L),
+            ShoppingList(id = "current", categoryId = "cat1", name = "Weekly", timestamp = 3L),
+            ShoppingList(id = "same-category", categoryId = "cat1", name = "Party", timestamp = 2L)
+        )
+
+        val result = moveItemTargets(categories, lists, currentListId = "current")
+
+        assertEquals(listOf("same-category", "current", "other-category"), result.map { it.listId })
+        assertEquals(listOf(false, true, false), result.map { it.isCurrentList })
     }
 
     private fun item(

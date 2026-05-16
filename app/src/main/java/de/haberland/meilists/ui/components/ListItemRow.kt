@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.DriveFileMove
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material3.Checkbox
@@ -32,6 +33,7 @@ fun ListItemRow(
     item: ListItem,
     onCheckedChange: (Boolean) -> Unit,
     onEditClick: () -> Unit,
+    onMoveClick: () -> Unit,
     onDeleteClick: () -> Unit
 ) {
     Row(
@@ -76,6 +78,14 @@ fun ListItemRow(
             Icon(
                 imageVector = Icons.Default.Edit,
                 contentDescription = "Bearbeiten",
+                modifier = Modifier.size(20.dp),
+                tint = MaterialTheme.colorScheme.primary
+            )
+        }
+        IconButton(onClick = onMoveClick) {
+            Icon(
+                imageVector = Icons.AutoMirrored.Filled.DriveFileMove,
+                contentDescription = "Verschieben",
                 modifier = Modifier.size(20.dp),
                 tint = MaterialTheme.colorScheme.primary
             )

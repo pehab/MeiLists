@@ -6,6 +6,7 @@ import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import de.haberland.meilists.model.AppDatabase
+import de.haberland.meilists.model.CategoryEntity
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import org.junit.After
@@ -32,16 +33,10 @@ class AppDatabaseMigrationTest {
     }
 
     @Test
-    fun migration11To12AddsAutoLearningDefaultAndKeepsCategoryData() = runBlocking {
+    fun migration11To13AddsAutoLearningDefaultAndKeepsCategoryData() = runBlocking {
         createVersion11Database()
 
-        val migratedDatabase = Room.databaseBuilder(context, AppDatabase::class.java, TEST_DB)
-            .addMigrations(AppDatabase.MIGRATION_11_12)
-            .allowMainThreadQueries()
-            .build()
-
-        val categories = migratedDatabase.shoppingDao().getAllCategories().first()
-        migratedDatabase.close()
+        val categories = readMigratedCategories()
 
         assertEquals(1, categories.size)
         assertEquals("Groceries", categories.single().name)
@@ -49,11 +44,81 @@ class AppDatabaseMigrationTest {
         assertTrue(categories.single().autoLearningEnabled)
     }
 
+    @Test
+    fun migration12To13KeepsCategoryDataFromOldVersion12Schema() = runBlocking {
+        createVersion12DatabaseWithoutAutoLearningDefault()
+
+        val categories = readMigratedCategories()
+
+        assertEquals(1, categories.size)
+        assertEquals("Groceries", categories.single().name)
+        assertFalse(categories.single().hideCheckedItems)
+        assertTrue(categories.single().autoLearningEnabled)
+    }
+
+    @Test
+    fun migration12To13KeepsCategoryDataFromCurrentVersion12Schema() = runBlocking {
+        createVersion12DatabaseWithAutoLearningDefault()
+
+        val categories = readMigratedCategories()
+
+        assertEquals(1, categories.size)
+        assertEquals("Groceries", categories.single().name)
+        assertFalse(categories.single().hideCheckedItems)
+        assertTrue(categories.single().autoLearningEnabled)
+    }
+
+    private suspend fun readMigratedCategories(): List<CategoryEntity> {
+        val migratedDatabase = Room.databaseBuilder(context, AppDatabase::class.java, TEST_DB)
+            .addMigrations(AppDatabase.MIGRATION_11_12, AppDatabase.MIGRATION_12_13)
+            .allowMainThreadQueries()
+            .build()
+
+        val categories = migratedDatabase.shoppingDao().getAllCategories().first()
+        migratedDatabase.close()
+        return categories
+    }
+
     private fun createVersion11Database() {
+        createDatabase(version = 11, includeAutoLearning = false, autoLearningHasDefault = false)
+    }
+
+    private fun createVersion12DatabaseWithoutAutoLearningDefault() {
+        createDatabase(version = 12, includeAutoLearning = true, autoLearningHasDefault = false)
+    }
+
+    private fun createVersion12DatabaseWithAutoLearningDefault() {
+        createDatabase(version = 12, includeAutoLearning = true, autoLearningHasDefault = true)
+    }
+
+    private fun createDatabase(
+        version: Int,
+        includeAutoLearning: Boolean,
+        autoLearningHasDefault: Boolean
+    ) {
         val dbFile = context.getDatabasePath(TEST_DB)
         dbFile.parentFile?.mkdirs()
 
         SQLiteDatabase.openOrCreateDatabase(dbFile, null).use { db ->
+            val autoLearningColumn = if (includeAutoLearning) {
+                val defaultClause = if (autoLearningHasDefault) " DEFAULT 1" else ""
+                """
+                    autoLearningEnabled INTEGER NOT NULL$defaultClause,
+                """.trimIndent()
+            } else {
+                ""
+            }
+            val autoLearningColumnName = if (includeAutoLearning) {
+                "autoLearningEnabled,"
+            } else {
+                ""
+            }
+            val autoLearningValue = if (includeAutoLearning) {
+                "1,"
+            } else {
+                ""
+            }
+
             db.execSQL(
                 """
                 CREATE TABLE IF NOT EXISTS categories (
@@ -63,6 +128,7 @@ class AppDatabaseMigrationTest {
                     storageType TEXT NOT NULL,
                     remotePath TEXT,
                     hideCheckedItems INTEGER NOT NULL,
+                    $autoLearningColumn
                     ownerId TEXT,
                     allowedUsers TEXT NOT NULL,
                     PRIMARY KEY(id)
@@ -124,6 +190,7 @@ class AppDatabaseMigrationTest {
                     storageType,
                     remotePath,
                     hideCheckedItems,
+                    $autoLearningColumnName
                     ownerId,
                     allowedUsers
                 ) VALUES (
@@ -133,12 +200,13 @@ class AppDatabaseMigrationTest {
                     'LOCAL',
                     NULL,
                     0,
+                    $autoLearningValue
                     NULL,
                     ''
                 )
                 """.trimIndent()
             )
-            db.version = 11
+            db.version = version
         }
     }
 

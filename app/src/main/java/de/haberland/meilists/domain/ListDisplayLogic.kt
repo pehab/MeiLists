@@ -1,7 +1,16 @@
 package de.haberland.meilists.domain
 
+import de.haberland.meilists.model.Category
 import de.haberland.meilists.model.ListItem
 import de.haberland.meilists.model.ShoppingList
+
+data class MoveItemTarget(
+    val listId: String,
+    val listName: String,
+    val categoryId: String,
+    val categoryName: String,
+    val isCurrentList: Boolean
+)
 
 fun sortedListsForCategory(
     lists: List<ShoppingList>,
@@ -10,6 +19,30 @@ fun sortedListsForCategory(
     lists
         .filter { it.categoryId == categoryId }
         .sortedWith(compareByDescending<ShoppingList> { it.timestamp }.thenBy { it.name })
+
+fun moveItemTargets(
+    categories: List<Category>,
+    lists: List<ShoppingList>,
+    currentListId: String
+): List<MoveItemTarget> {
+    val categoriesById = categories.associateBy { it.id }
+    val currentCategoryId = lists.find { it.id == currentListId }?.categoryId
+
+    return lists.mapNotNull { list ->
+        val category = categoriesById[list.categoryId] ?: return@mapNotNull null
+        MoveItemTarget(
+            listId = list.id,
+            listName = list.name,
+            categoryId = category.id,
+            categoryName = category.name,
+            isCurrentList = list.id == currentListId
+        )
+    }.sortedWith(
+        compareBy<MoveItemTarget> { it.categoryId != currentCategoryId }
+            .thenBy { it.categoryName.lowercase() }
+            .thenBy { it.listName.lowercase() }
+    )
+}
 
 fun filteredAndSortedItemsForDisplay(
     items: List<ListItem>,

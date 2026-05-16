@@ -118,6 +118,16 @@ class ShoppingDaoTest {
     }
 
     @Test
+    fun updateItemCanMoveItemToAnotherList() = runBlocking {
+        dao.insertItem(item(id = "item1", listId = "source", text = "Milk"))
+
+        dao.updateItem(item(id = "item1", listId = "target", text = "Milk"))
+
+        val moved = dao.getAllItems().first().single()
+        assertEquals("target", moved.listId)
+    }
+
+    @Test
     fun deleteCheckedItemsRemovesOnlyCheckedItemsForList() = runBlocking {
         dao.insertItem(item(id = "checked", listId = "list1", checked = true))
         dao.insertItem(item(id = "open", listId = "list1", checked = false))
