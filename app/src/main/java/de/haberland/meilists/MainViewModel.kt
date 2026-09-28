@@ -22,6 +22,7 @@ import com.google.firebase.auth.GoogleAuthProvider
 import com.google.firebase.crashlytics.FirebaseCrashlytics
 import com.google.firebase.firestore.*
 import de.haberland.meilists.model.*
+import de.haberland.meilists.domain.isVisibleTo
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.*
@@ -59,9 +60,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         awaitClose { auth.removeAuthStateListener(listener) }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), auth.currentUser)
 
-    val categories: StateFlow<List<Category>> = dao.getAllCategories()
-        .map { entities ->
-            entities.map { entity ->
+    val categories: StateFlow<List<Category>> = combine(dao.getAllCategories(), currentUser) { entities, user ->
+            entities.filter { it.isVisibleTo(user?.uid) }.map { entity ->
                 Category(
                     id = entity.id,
                     name = entity.name,
@@ -103,17 +103,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    val lists: StateFlow<List<ShoppingList>> = dao.getAllLists()
-        .map { entities ->
-            entities.map { ShoppingList(it.id, it.categoryId, it.name, it.sortByArea, it.timestamp) }
+    val lists: StateFlow<List<ShoppingList>> = combine(dao.getAllLists(), categories) { entities, visibleCategories ->
+            val categoryIds = visibleCategories.map { it.id }.toSet()
+            entities.filter { it.categoryId in categoryIds }.map { ShoppingList(it.id, it.categoryId, it.name, it.sortByArea, it.timestamp) }
         }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     private val _selectedListId = MutableStateFlow<String?>(null)
     val selectedListId: StateFlow<String?> = _selectedListId.asStateFlow()
 
-    val items: StateFlow<List<ListItem>> = dao.getAllItems()
-        .map { entities ->
-            entities.map { ListItem(it.id, it.listId, it.text, it.isChecked, it.timestamp, it.area) }
+    val items: StateFlow<List<ListItem>> = combine(dao.getAllItems(), lists) { entities, visibleLists ->
+            val listIds = visibleLists.map { it.id }.toSet()
+            entities.filter { it.listId in listIds }.map { ListItem(it.id, it.listId, it.text, it.isChecked, it.timestamp, it.area) }
         }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     init {
@@ -133,17 +133,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     .sortedWith(compareByDescending<ShoppingList> { it.timestamp }.thenBy { it.name })
             }.collectLatest { (catId, catLists) ->
                 if (catId != null && (_selectedListId.value == null || catLists.none { it.id == _selectedListId.value })) {
-                    if (catLists.isNotEmpty()) {
-                        _selectedListId.value = catLists.first().id
-                    }
+                    _selectedListId.value = catLists.firstOrNull()?.id
                 }
             }
         }
 
         viewModelScope.launch {
-            categories.collectLatest { 
-                if (_selectedCategoryId.value == null && it.isNotEmpty()) {
-                    selectCategory(it.first().id)
+            categories.collectLatest { visible ->
+                if (visible.none { it.id == _selectedCategoryId.value }) {
+                    selectCategory(visible.firstOrNull()?.id)
                 }
             }
         }
@@ -283,7 +281,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         activeListeners["catalog_products_$categoryId"]?.remove()
         activeListeners.remove("catalog_products_$categoryId")
         
-        lists.value.filter { it.categoryId == categoryId }.forEach { removeLocalList(it.id) }
+        dao.getListsByCategory(categoryId).forEach { removeLocalList(it.id) }
         dao.deleteCategory(categoryId)
     }
 
