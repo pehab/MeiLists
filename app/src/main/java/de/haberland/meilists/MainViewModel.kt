@@ -22,6 +22,8 @@ import com.google.firebase.auth.GoogleAuthProvider
 import com.google.firebase.crashlytics.FirebaseCrashlytics
 import com.google.firebase.firestore.*
 import de.haberland.meilists.model.*
+import de.haberland.meilists.domain.isVisibleTo
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
@@ -40,6 +42,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val crashlytics = FirebaseCrashlytics.getInstance()
     private val appUpdateManager = AppUpdateManagerFactory.create(application)
 
+    private val syncSession = SyncSession(viewModelScope, ::reportSyncError)
+    private val syncGeneration get() = syncSession.generation
+
     private val activeListeners = mutableMapOf<String, ListenerRegistration>()
 
     private val _uiEvent = MutableSharedFlow<UiEvent>()
@@ -55,9 +60,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         awaitClose { auth.removeAuthStateListener(listener) }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), auth.currentUser)
 
-    val categories: StateFlow<List<Category>> = dao.getAllCategories()
-        .map { entities ->
-            entities.map { entity ->
+    val categories: StateFlow<List<Category>> = combine(dao.getAllCategories(), currentUser) { entities, user ->
+            entities.filter { it.isVisibleTo(user?.uid) }.map { entity ->
                 Category(
                     id = entity.id,
                     name = entity.name,
@@ -99,31 +103,26 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    val lists: StateFlow<List<ShoppingList>> = dao.getAllLists()
-        .map { entities ->
-            entities.map { ShoppingList(it.id, it.categoryId, it.name, it.sortByArea, it.timestamp) }
+    val lists: StateFlow<List<ShoppingList>> = combine(dao.getAllLists(), categories) { entities, visibleCategories ->
+            val categoryIds = visibleCategories.map { it.id }.toSet()
+            entities.filter { it.categoryId in categoryIds }.map { ShoppingList(it.id, it.categoryId, it.name, it.sortByArea, it.timestamp) }
         }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     private val _selectedListId = MutableStateFlow<String?>(null)
     val selectedListId: StateFlow<String?> = _selectedListId.asStateFlow()
 
-    val items: StateFlow<List<ListItem>> = dao.getAllItems()
-        .map { entities ->
-            entities.map { ListItem(it.id, it.listId, it.text, it.isChecked, it.timestamp, it.area) }
+    val items: StateFlow<List<ListItem>> = combine(dao.getAllItems(), lists) { entities, visibleLists ->
+            val listIds = visibleLists.map { it.id }.toSet()
+            entities.filter { it.listId in listIds }.map { ListItem(it.id, it.listId, it.text, it.isChecked, it.timestamp, it.area) }
         }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     init {
         viewModelScope.launch {
             currentUser.collectLatest { user ->
+                clearAllListeners()
+                crashlytics.setUserId(user?.uid.orEmpty())
                 if (user != null) {
-                    crashlytics.setUserId(user.uid)
                     syncWithFirebase()
-                    // Sofort-Sync für lokal bereits bekannte Kategorien starten
-                    categories.value.filter { it.settings.type == StorageType.FIREBASE }.forEach { 
-                        syncListsForCategory(it.id)
-                    }
-                } else {
-                    clearAllListeners()
                 }
             }
         }
@@ -134,17 +133,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     .sortedWith(compareByDescending<ShoppingList> { it.timestamp }.thenBy { it.name })
             }.collectLatest { (catId, catLists) ->
                 if (catId != null && (_selectedListId.value == null || catLists.none { it.id == _selectedListId.value })) {
-                    if (catLists.isNotEmpty()) {
-                        _selectedListId.value = catLists.first().id
-                    }
+                    _selectedListId.value = catLists.firstOrNull()?.id
                 }
             }
         }
 
         viewModelScope.launch {
-            categories.collectLatest { 
-                if (_selectedCategoryId.value == null && it.isNotEmpty()) {
-                    selectCategory(it.first().id)
+            categories.collectLatest { visible ->
+                if (visible.none { it.id == _selectedCategoryId.value }) {
+                    selectCategory(visible.firstOrNull()?.id)
                 }
             }
         }
@@ -162,8 +159,20 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun clearAllListeners() {
+        syncSession.reset()
         activeListeners.values.forEach { it.remove() }
         activeListeners.clear()
+    }
+
+    private fun reportSyncError(error: Exception) {
+        Log.e("MeiLists", "Synchronisation fehlgeschlagen", error)
+        viewModelScope.launch {
+            _uiEvent.emit(UiEvent.ShowToast("Synchronisation fehlgeschlagen. Bitte Verbindung und Freigabe prüfen und erneut anmelden."))
+        }
+    }
+
+    private fun launchSync(generation: Long, userId: String, block: suspend () -> Unit) {
+        syncSession.launch(generation, { auth.currentUser?.uid == userId }, block)
     }
 
     override fun onCleared() {
@@ -195,6 +204,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 Log.e("MeiLists", "Credential Fehler: ${e.message}")
                 _uiEvent.emit(UiEvent.ShowToast("Anmeldefehler: ${e.message}"))
             } catch (e: Exception) {
+                if (e is CancellationException) throw e
                 Log.e("MeiLists", "Login Fehler: ${e.message}")
                 _uiEvent.emit(UiEvent.ShowToast("Login fehlgeschlagen"))
             }
@@ -203,23 +213,33 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun signOut() {
         viewModelScope.launch {
-            auth.signOut()
-            credentialManager.clearCredentialState(ClearCredentialStateRequest())
             clearAllListeners()
+            auth.signOut()
+            try {
+                credentialManager.clearCredentialState(ClearCredentialStateRequest())
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                if (e is CancellationException) throw e
+                Log.w("MeiLists", "Zugangsdaten konnten nicht zurückgesetzt werden", e)
+            }
             _uiEvent.emit(UiEvent.ShowToast("Abgemeldet"))
         }
     }
 
     private fun syncWithFirebase() {
+        val generation = syncGeneration
+        val syncUserId = auth.currentUser?.uid ?: return
         val user = auth.currentUser ?: return
         Log.d("MeiLists", "Starte Firebase Sync für User: ${user.uid}")
         
         val categoryListener = firestore.collection("categories")
             .whereArrayContains("allowedUsers", user.uid)
             .addSnapshotListener { snapshot: QuerySnapshot?, e: FirebaseFirestoreException? ->
+                if (generation != syncGeneration || auth.currentUser?.uid != syncUserId) return@addSnapshotListener
                 if (e != null) {
                     Log.e("MeiLists", "Kategorien-Sync Fehler: ${e.message}")
-                    viewModelScope.launch { _uiEvent.emit(UiEvent.ShowToast("Fehler beim Laden der Kategorien: ${e.code}")) }
+                    launchSync(generation, syncUserId) { _uiEvent.emit(UiEvent.ShowToast("Fehler beim Laden der Kategorien: ${e.code}")) }
                     return@addSnapshotListener
                 }
                 if (snapshot == null) return@addSnapshotListener
@@ -229,7 +249,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     val id = doc.id
                     when (change.type) {
                         DocumentChange.Type.ADDED, DocumentChange.Type.MODIFIED -> {
-                            viewModelScope.launch {
+                            launchSync(generation, syncUserId) {
                                 dao.insertCategory(CategoryEntity(
                                     id = id,
                                     name = doc.getString("name") ?: "",
@@ -245,7 +265,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                             }
                         }
                         DocumentChange.Type.REMOVED -> {
-                            viewModelScope.launch { removeLocalCategory(id) }
+                            launchSync(generation, syncUserId) { removeLocalCategory(id) }
                         }
                     }
                 }
@@ -261,24 +281,31 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         activeListeners["catalog_products_$categoryId"]?.remove()
         activeListeners.remove("catalog_products_$categoryId")
         
-        lists.value.filter { it.categoryId == categoryId }.forEach { removeLocalList(it.id) }
+        dao.getListsByCategory(categoryId).forEach { removeLocalList(it.id) }
         dao.deleteCategory(categoryId)
     }
 
     private fun syncListsForCategory(categoryId: String) {
+        val generation = syncGeneration
+        val syncUserId = auth.currentUser?.uid ?: return
         if (activeListeners.containsKey("lists_$categoryId")) return
         syncCatalogForCategory(categoryId)
         
         val listener = firestore.collection("shopping_lists")
             .whereEqualTo("categoryId", categoryId)
             .addSnapshotListener { snapshot, e ->
-                if (e != null || snapshot == null) return@addSnapshotListener
+                if (generation != syncGeneration || auth.currentUser?.uid != syncUserId) return@addSnapshotListener
+                if (e != null) {
+                    reportSyncError(e)
+                    return@addSnapshotListener
+                }
+                if (snapshot == null) return@addSnapshotListener
                 snapshot.documentChanges.forEach { change ->
                     val id = change.document.id
                     val doc = change.document
                     when (change.type) {
                         DocumentChange.Type.ADDED, DocumentChange.Type.MODIFIED -> {
-                            viewModelScope.launch {
+                            launchSync(generation, syncUserId) {
                                 dao.insertList(ShoppingListEntity(
                                     id = id, 
                                     categoryId = categoryId, 
@@ -290,7 +317,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                             }
                         }
                         DocumentChange.Type.REMOVED -> {
-                            viewModelScope.launch { removeLocalList(id) }
+                            launchSync(generation, syncUserId) { removeLocalList(id) }
                         }
                     }
                 }
@@ -306,18 +333,25 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun syncItemsForList(listId: String) {
+        val generation = syncGeneration
+        val syncUserId = auth.currentUser?.uid ?: return
         if (activeListeners.containsKey("items_$listId")) return
         
         val listener = firestore.collection("list_items")
             .whereEqualTo("listId", listId)
             .addSnapshotListener { snapshot, e ->
-                if (e != null || snapshot == null) return@addSnapshotListener
+                if (generation != syncGeneration || auth.currentUser?.uid != syncUserId) return@addSnapshotListener
+                if (e != null) {
+                    reportSyncError(e)
+                    return@addSnapshotListener
+                }
+                if (snapshot == null) return@addSnapshotListener
                 snapshot.documentChanges.forEach { change ->
                     val id = change.document.id
                     val doc = change.document
                     when (change.type) {
                         DocumentChange.Type.ADDED, DocumentChange.Type.MODIFIED -> {
-                            viewModelScope.launch {
+                            launchSync(generation, syncUserId) {
                                 dao.insertItem(ListItemEntity(
                                     id = id, 
                                     listId = listId, 
@@ -329,7 +363,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                             }
                         }
                         DocumentChange.Type.REMOVED -> {
-                            viewModelScope.launch { dao.deleteItem(id) }
+                            launchSync(generation, syncUserId) { dao.deleteItem(id) }
                         }
                     }
                 }
@@ -376,6 +410,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         "autoLearningEnabled" to true
                     )).await()
                 } catch (e: Exception) {
+                if (e is CancellationException) throw e
                     Log.e("MeiLists", "Fehler beim Firebase-Sync (Category): ${e.message}")
                 }
             }
@@ -401,6 +436,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         firestore.collection("categories").document(categoryId).update("allowedUsers", FieldValue.arrayRemove(user.uid)).await()
                     }
                 } catch (e: Exception) {
+                if (e is CancellationException) throw e
                     Log.e("MeiLists", "Fehler beim Firebase-Delete (Category): ${e.message}")
                 }
             }
@@ -420,15 +456,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun selectList(id: String?) { _selectedListId.value = id }
 
     private fun syncCatalogForCategory(categoryId: String) {
+        val generation = syncGeneration
+        val syncUserId = auth.currentUser?.uid ?: return
         if (activeListeners.containsKey("catalog_areas_$categoryId")) return
 
         val areaListener = firestore.collection("catalog_areas")
             .whereEqualTo("categoryId", categoryId)
             .addSnapshotListener { snapshot, e ->
+                if (generation != syncGeneration || auth.currentUser?.uid != syncUserId) return@addSnapshotListener
                 if (e != null) {
                     Log.e("MeiLists", "Katalog-Sync Fehler (Bereiche) für $categoryId: ${e.message}")
                     if (e.code == FirebaseFirestoreException.Code.PERMISSION_DENIED) {
-                        viewModelScope.launch { _uiEvent.emit(UiEvent.ShowToast("Kein Zugriff auf Katalog-Bereiche. Bitte Firestore-Regeln prüfen.")) }
+                        launchSync(generation, syncUserId) { _uiEvent.emit(UiEvent.ShowToast("Kein Zugriff auf Katalog-Bereiche. Bitte Firestore-Regeln prüfen.")) }
                     }
                     return@addSnapshotListener
                 }
@@ -438,12 +477,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     val doc = change.document
                     when (change.type) {
                         DocumentChange.Type.ADDED, DocumentChange.Type.MODIFIED -> {
-                            viewModelScope.launch {
+                            launchSync(generation, syncUserId) {
                                 dao.insertCatalogArea(CatalogAreaEntity(doc.id, categoryId, doc.getString("name") ?: ""))
                             }
                         }
                         DocumentChange.Type.REMOVED -> {
-                            viewModelScope.launch { dao.deleteCatalogArea(doc.id) }
+                            launchSync(generation, syncUserId) { dao.deleteCatalogArea(doc.id) }
                         }
                     }
                 }
@@ -453,10 +492,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val productListener = firestore.collection("catalog_products")
             .whereEqualTo("categoryId", categoryId)
             .addSnapshotListener { snapshot, e ->
+                if (generation != syncGeneration || auth.currentUser?.uid != syncUserId) return@addSnapshotListener
                 if (e != null) {
                     Log.e("MeiLists", "Katalog-Sync Fehler (Produkte) für $categoryId: ${e.message}")
                     if (e.code == FirebaseFirestoreException.Code.PERMISSION_DENIED) {
-                        viewModelScope.launch { _uiEvent.emit(UiEvent.ShowToast("Kein Zugriff auf Katalog-Produkte. Bitte Firestore-Regeln prüfen.")) }
+                        launchSync(generation, syncUserId) { _uiEvent.emit(UiEvent.ShowToast("Kein Zugriff auf Katalog-Produkte. Bitte Firestore-Regeln prüfen.")) }
                     }
                     return@addSnapshotListener
                 }
@@ -466,7 +506,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     val doc = change.document
                     when (change.type) {
                         DocumentChange.Type.ADDED, DocumentChange.Type.MODIFIED -> {
-                            viewModelScope.launch {
+                            launchSync(generation, syncUserId) {
                                 dao.insertCatalogProduct(CatalogProductEntity(
                                     doc.id, 
                                     categoryId, 
@@ -476,7 +516,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                             }
                         }
                         DocumentChange.Type.REMOVED -> {
-                            viewModelScope.launch { dao.deleteCatalogProduct(doc.id) }
+                            launchSync(generation, syncUserId) { dao.deleteCatalogProduct(doc.id) }
                         }
                     }
                 }
@@ -510,6 +550,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         "area" to area
                     )).await()
                 } catch (e: Exception) {
+                if (e is CancellationException) throw e
                     Log.e("MeiLists", "Fehler beim Firebase-Sync (Item): ${e.message}")
                 }
             }
@@ -536,6 +577,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         "name" to area
                     )).await()
                 } catch (e: Exception) {
+                if (e is CancellationException) throw e
                     Log.e("MeiLists", "Katalog-Sync Fehler (Area): ${e.message}")
                 }
             }
@@ -558,6 +600,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 )).await()
                 Log.d("MeiLists", "Produkt erfolgreich nach Firebase synchronisiert: $text")
             } catch (e: Exception) {
+                if (e is CancellationException) throw e
                 Log.e("MeiLists", "Katalog-Sync Fehler (Product): ${e.message}")
                 _uiEvent.emit(UiEvent.ShowToast("Fehler beim Hochladen von $text"))
             }
@@ -575,6 +618,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 try {
                     firestore.collection("list_items").document(itemId).update("isChecked", newChecked).await()
                 } catch (e: Exception) {
+                if (e is CancellationException) throw e
                     Log.e("MeiLists", "Fehler beim Firebase-Update (Item): ${e.message}")
                 }
             }
@@ -594,6 +638,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         "area" to newArea
                     )).await()
                 } catch (e: Exception) {
+                if (e is CancellationException) throw e
                     Log.e("MeiLists", "Fehler beim Firebase-Update (Item): ${e.message}")
                 }
             }
@@ -645,6 +690,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     }
                 }
             } catch (e: Exception) {
+                if (e is CancellationException) throw e
                 Log.e("MeiLists", "Fehler beim Firebase-Move (Item): ${e.message}")
                 _uiEvent.emit(UiEvent.ShowToast("Eintrag lokal verschoben, Sync fehlgeschlagen"))
             }
@@ -661,6 +707,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 try {
                     firestore.collection("list_items").document(itemId).delete().await()
                 } catch (e: Exception) {
+                if (e is CancellationException) throw e
                     Log.e("MeiLists", "Fehler beim Firebase-Delete (Item): ${e.message}")
                 }
             }
@@ -687,6 +734,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 _uiEvent.emit(UiEvent.ShowToast("Kategorie beigetreten"))
                 selectCategory(inviteCode)
             } catch (e: Exception) {
+                if (e is CancellationException) throw e
                 Log.e("MeiLists", "Join Fehler: ${e.message}")
                 _uiEvent.emit(UiEvent.ShowToast("Fehler beim Beitreten: ${e.message}"))
             }
@@ -725,6 +773,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         "name" to name
                     )).await()
                 } catch (e: Exception) {
+                if (e is CancellationException) throw e
                     Log.e("MeiLists", "Fehler beim Firebase-Sync (CatalogArea): ${e.message}")
                 }
             }
@@ -750,6 +799,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         .whereEqualTo("defaultArea", oldName).get().await()
                     products.documents.forEach { it.reference.update("defaultArea", newName) }
                 } catch (e: Exception) {
+                if (e is CancellationException) throw e
                     Log.e("MeiLists", "Fehler beim Firebase-Sync (RenameArea): ${e.message}")
                 }
             }
@@ -773,6 +823,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         .whereEqualTo("defaultArea", areaName).get().await()
                     products.documents.forEach { it.reference.update("defaultArea", null) }
                 } catch (e: Exception) {
+                if (e is CancellationException) throw e
                     Log.e("MeiLists", "Fehler beim Firebase-Sync (DeleteArea): ${e.message}")
                 }
             }
@@ -796,6 +847,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         "defaultArea" to area
                     )).await()
                 } catch (e: Exception) {
+                if (e is CancellationException) throw e
                     Log.e("MeiLists", "Fehler beim Firebase-Sync (AddProduct): ${e.message}")
                 }
             }
@@ -817,6 +869,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         "defaultArea" to newArea
                     )).await()
                 } catch (e: Exception) {
+                if (e is CancellationException) throw e
                     Log.e("MeiLists", "Fehler beim Firebase-Sync (UpdateProduct): ${e.message}")
                 }
             }
@@ -835,6 +888,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 try {
                     firestore.collection("catalog_products").document(productId).delete().await()
                 } catch (e: Exception) {
+                if (e is CancellationException) throw e
                     Log.e("MeiLists", "Fehler beim Firebase-Sync (DeleteProduct): ${e.message}")
                 }
             }
@@ -853,6 +907,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                             .get().await()
                             .documents.mapNotNull { it.getString("name") }
                     } catch (e: Exception) {
+                if (e is CancellationException) throw e
                         Log.e("MeiLists", "Fehler beim Importieren der Bereiche: ${e.message}")
                         emptyList()
                     }
@@ -876,6 +931,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                                 if (name != null) name to it.getString("defaultArea") else null
                             }
                     } catch (e: Exception) {
+                if (e is CancellationException) throw e
                         Log.e("MeiLists", "Fehler beim Importieren der Produkte: ${e.message}")
                         emptyList()
                     }
@@ -909,6 +965,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         "timestamp" to timestamp
                     )).await()
                 } catch (e: Exception) {
+                if (e is CancellationException) throw e
                     Log.e("MeiLists", "Fehler beim Firebase-Sync (List): ${e.message}")
                 }
             }
@@ -925,6 +982,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 try {
                     firestore.collection("shopping_lists").document(listId).update("name", newName).await()
                 } catch (e: Exception) {
+                if (e is CancellationException) throw e
                     Log.e("MeiLists", "Fehler beim Firebase-Rename (List): ${e.message}")
                 }
             }
@@ -941,6 +999,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 try {
                     firestore.collection("shopping_lists").document(listId).update("sortByArea", newValue).await()
                 } catch (e: Exception) {
+                if (e is CancellationException) throw e
                     Log.e("MeiLists", "Fehler beim Firebase-Update (List Sort): ${e.message}")
                 }
             }
@@ -955,6 +1014,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 try {
                     firestore.collection("shopping_lists").document(listId).delete().await()
                 } catch (e: Exception) {
+                if (e is CancellationException) throw e
                     Log.e("MeiLists", "Fehler beim Firebase-Delete (List): ${e.message}")
                 }
             }

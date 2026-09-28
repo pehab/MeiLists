@@ -20,6 +20,9 @@ interface ShoppingDao {
     @Query("SELECT * FROM shopping_lists")
     fun getAllLists(): Flow<List<ShoppingListEntity>>
 
+    @Query("SELECT * FROM shopping_lists WHERE categoryId = :categoryId")
+    suspend fun getListsByCategory(categoryId: String): List<ShoppingListEntity>
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertList(list: ShoppingListEntity)
 
