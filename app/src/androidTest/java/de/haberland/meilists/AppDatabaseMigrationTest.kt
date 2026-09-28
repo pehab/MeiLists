@@ -90,8 +90,8 @@ class AppDatabaseMigrationTest {
     @Test
     fun currentSchemaReopensWithoutLosingData() = runBlocking {
         createVersion11Database()
-        readMigratedCategories()
-        readMigratedCategories()
+        val first = readMigratedCategories()
+        assertEquals(first, readMigratedCategories())
     }
 
     @Test

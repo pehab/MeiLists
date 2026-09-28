@@ -50,31 +50,19 @@ jobs:
       - uses: gradle/actions/setup-gradle@v5
       - name: Build migration test APK
         run: bash gradlew assembleDebug assembleDebugAndroidTest
+      - name: Enable emulator acceleration
+        run: sudo chmod 666 /dev/kvm
       - name: Run Room migration tests on Android 35
-        shell: bash
-        run: |
-          set -euo pipefail
-          export PATH="$ANDROID_HOME/platform-tools:$PATH"
-          sudo chmod 666 /dev/kvm
-          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platform-tools" "emulator" "system-images;android-35;google_apis;x86_64"
-          echo no | "$ANDROID_HOME/cmdline-tools/latest/bin/avdmanager" create avd --force --name migration-test --package "system-images;android-35;google_apis;x86_64"
-          "$ANDROID_HOME/emulator/emulator" -avd migration-test -no-window -no-audio -no-boot-anim -no-snapshot -gpu swiftshader_indirect > "$RUNNER_TEMP/emulator.log" 2>&1 &
-          trap 'adb emu kill || true' EXIT
-          timeout 240 adb wait-for-device
-          booted=false
-          for attempt in {1..120}; do
-            if [[ "$(adb shell getprop sys.boot_completed | tr -d '\r')" == "1" ]]; then
-              booted=true
-              break
-            fi
-            sleep 2
-          done
-          if [[ "$booted" != true ]]; then
-            cat "$RUNNER_TEMP/emulator.log"
-            exit 1
-          fi
-          adb shell input keyevent 82
-          bash gradlew connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=de.haberland.meilists.AppDatabaseMigrationTest
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          target: google_apis
+          arch: x86_64
+          profile: pixel_2
+          ram-size: 2048M
+          disk-size: 2048M
+          emulator-boot-timeout: 300
+          script: bash gradlew connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=de.haberland.meilists.AppDatabaseMigrationTest
       - name: Upload migration test reports
         if: always()
         uses: actions/upload-artifact@v7
