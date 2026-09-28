@@ -1,7 +1,7 @@
 # MeiLists
 
 Android-App für Einkaufs- und Aufgabenlisten mit Kotlin und Jetpack Compose.
-Aktueller Stand: **0.2.6**, `versionCode 11`; Paket `de.haberland.meilists`.
+Aktueller Stand: **0.2.7**, `versionCode 12`; Paket `de.haberland.meilists`.
 
 ## Funktionen
 
@@ -64,7 +64,7 @@ Die Datenbank hat Version 13, mit expliziten Migrationen 11 → 12 → 13. Für 
 
 ## Technische nächste Schritte
 
-Das große `MainViewModel` schrittweise in Authentifizierungs-, Synchronisations- und Listen-Repositories aufteilen. Vorher das Verhalten bei Abmeldung, Kontowechsel, entzogenen Freigaben und Netzwerkfehlern absichern. Listener-Fehler werden teilweise noch still ignoriert. Neue Datenbankversionen benötigen überprüfte Migrationen und aktualisierte Schema-Dateien.
+Das große `MainViewModel` schrittweise in Authentifizierungs-, Synchronisations- und Listen-Repositories aufteilen. Vorher das Verhalten bei Abmeldung, Kontowechsel, entzogenen Freigaben und Netzwerkfehlern absichern. Fehler beim Listen-/Einträge-Sync und beim lokalen Verarbeiten von Listener-Daten werden angezeigt. Kontowechsel beendet alte Listener und ausstehende Synchronisationsjobs; verspätete Antworten werden verworfen. JVM-Tests prüfen diese Abbruch- und Fehlerfälle. Neue Datenbankversionen benötigen überprüfte Migrationen und aktualisierte Schema-Dateien.
 
 ## Datenschutz
 
