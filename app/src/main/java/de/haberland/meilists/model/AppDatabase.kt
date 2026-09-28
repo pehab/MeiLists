@@ -25,16 +25,39 @@ abstract class AppDatabase : RoomDatabase() {
 
         fun getDatabase(context: Context): AppDatabase {
             return INSTANCE ?: synchronized(this) {
-                val instance = Room.databaseBuilder(
-                    context.applicationContext,
-                    AppDatabase::class.java,
-                    "meilists_database"
-                )
-                    .addMigrations(MIGRATION_11_12, MIGRATION_12_13)
-                    .fallbackToDestructiveMigration(false)
-                    .build()
+                val instance = builder(context, "meilists_database").build()
                 INSTANCE = instance
                 instance
+            }
+        }
+
+        // Shared by production and migration tests. Unknown versions fail without deleting data.
+        internal fun builder(context: Context, name: String): RoomDatabase.Builder<AppDatabase> =
+            Room.databaseBuilder(context.applicationContext, AppDatabase::class.java, name)
+                .addMigrations(*ALL_MIGRATIONS)
+
+        internal val MIGRATION_2_3 = object : Migration(2, 3) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE shopping_lists ADD COLUMN sortByArea INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE list_items ADD COLUMN area TEXT")
+            }
+        }
+
+        internal val MIGRATION_3_10 = object : Migration(3, 10) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                // Old lists have no creation time; 0 preserves deterministic name ordering.
+                // Rebuild to match the current schema without persisting an SQL default.
+                db.execSQL("CREATE TABLE shopping_lists_migration_10 (id TEXT NOT NULL PRIMARY KEY, categoryId TEXT NOT NULL, name TEXT NOT NULL, sortByArea INTEGER NOT NULL, timestamp INTEGER NOT NULL)")
+                db.execSQL("INSERT INTO shopping_lists_migration_10 SELECT id, categoryId, name, sortByArea, 0 FROM shopping_lists")
+                db.execSQL("DROP TABLE shopping_lists")
+                db.execSQL("ALTER TABLE shopping_lists_migration_10 RENAME TO shopping_lists")
+            }
+        }
+
+        internal val MIGRATION_10_11 = object : Migration(10, 11) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("CREATE TABLE catalog_areas (id TEXT NOT NULL PRIMARY KEY, categoryId TEXT NOT NULL, name TEXT NOT NULL)")
+                db.execSQL("CREATE TABLE catalog_products (id TEXT NOT NULL PRIMARY KEY, categoryId TEXT NOT NULL, name TEXT NOT NULL, defaultArea TEXT)")
             }
         }
 
@@ -99,6 +122,10 @@ abstract class AppDatabase : RoomDatabase() {
                 db.execSQL("ALTER TABLE categories_migration_13 RENAME TO categories")
             }
         }
+        internal val ALL_MIGRATIONS = arrayOf(
+            MIGRATION_2_3, MIGRATION_3_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13
+        )
+
     }
 }
 

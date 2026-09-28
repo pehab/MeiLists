@@ -1,7 +1,7 @@
 # MeiLists
 
 Android-App für Einkaufs- und Aufgabenlisten mit Kotlin und Jetpack Compose.
-Aktueller Stand: **0.2.7**, `versionCode 12`; Paket `de.haberland.meilists`.
+Aktueller Stand: **0.2.8**, `versionCode 13`; Paket `de.haberland.meilists`.
 
 ## Funktionen
 
@@ -54,13 +54,17 @@ Ohne vollständige Konfiguration verwendet Debug die normale Android-Debug-Signa
 - `app/src/test/`: JVM-Tests für Modelle, Anzeigelogik und Schema-Prüfungen.
 - `app/src/androidTest/`: Geräte-/Emulatortests für Migrationen, DAOs und UI.
 
-GitHub Actions führt Unit-Tests und den Debug-Build aus. Geräte-/Emulatortests werden dort derzeit nicht ausgeführt; lokal mit angeschlossenem Gerät:
+GitHub Actions führt Unit-Tests und den Debug-Build aus. Die Datenbank-Migrationstests laufen zusätzlich in CI auf einem Android-35-Emulator. Weitere Geräte-/UI-Tests lokal mit angeschlossenem Gerät:
 
 ```bash
 bash gradlew :app:connectedDebugAndroidTest
 ```
 
-Die Datenbank hat Version 13, mit expliziten Migrationen 11 → 12 → 13. Für andere nicht unterstützte Versionspfade ist ein destruktiver Fallback konfiguriert: lokale Daten können dabei verloren gehen.
+Die Datenbank bleibt auf Version 13. Datenbankversionen und App-Versionen sind unabhängig. Für alle in Git belegten älteren Schemata gibt es jetzt den Pfad 2 → 3 → 10 → 11 → 12 → 13. Die Tests prüfen Kategorien, Freigaben, Listen, abgehakte/offene Einträge, Zeitstempel, Bereiche, Katalogprodukte und deaktiviertes Autolernen. Alte Listen ohne Zeitstempel erhalten 0; neue Felder erhalten fachlich passende Standardwerte.
+
+Der automatische destruktive Fallback ist entfernt. Unbekannte Versionen und Downgrades werden beim Öffnen abgewiesen, ohne den Datenbestand zu löschen. Das ist kein automatischer Reparaturmodus: Bei einem solchen Fehler die App-Daten nicht löschen und die App nicht deinstallieren; eine passende Migration muss ergänzt werden. Bereits durch frühere App-Versionen gelöschte Daten lassen sich dadurch nicht wiederherstellen.
+
+Schemaquellen der Migrationsprüfung: `5f449d1` (DB 2), `145c87b` (DB 3), `75f0149` (DB 10), `f1b9158` (DB 11), `c38d931`/`94769dc` (beide Varianten DB 12).
 
 ## Technische nächste Schritte
 
