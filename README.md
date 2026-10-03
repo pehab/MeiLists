@@ -6,6 +6,9 @@ Aktueller Stand: **0.2.8**, `versionCode 13`; Paket `de.haberland.meilists`.
 ## Funktionen
 
 - Kategorien mit mehreren Listen, Farben und eigenen Anzeigeeinstellungen.
+- Zuletzt geöffnete Kategorie und Liste werden auf dem Gerät wiederhergestellt.
+- Listenreihenfolge pro Gerät und Kategorie über das Listenmenü anpassbar.
+- Katalogprodukte und Bereiche alphabetisch nach deutscher Sortierung.
 - Lokale Speicherung in Room; optional Firebase-Kategorien mit Google-Anmeldung und Live-Synchronisation.
 - Geteilten Kategorien per Einladungscode beitreten.
 - Einträge hinzufügen, bearbeiten, abhaken, verschieben und löschen.

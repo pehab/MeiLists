@@ -22,7 +22,9 @@ import com.google.firebase.auth.GoogleAuthProvider
 import com.google.firebase.crashlytics.FirebaseCrashlytics
 import com.google.firebase.firestore.*
 import de.haberland.meilists.model.*
+import de.haberland.meilists.domain.sortedListsForCategory
 import de.haberland.meilists.domain.isVisibleTo
+import de.haberland.meilists.domain.sortedByCatalogName
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.*
@@ -35,6 +37,28 @@ sealed class UiEvent {
 }
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
+    private val preferences = application.getSharedPreferences("navigation", android.content.Context.MODE_PRIVATE)
+    private val _listOrders = MutableStateFlow<Map<String, List<String>>>(emptyMap())
+    val listOrders = _listOrders.asStateFlow()
+
+    fun orderedLists(categoryId: String?, allLists: List<ShoppingList> = lists.value): List<ShoppingList> =
+        sortedListsForCategory(allLists, categoryId, orderFor(categoryId))
+
+    private fun orderFor(categoryId: String?): List<String> = if (categoryId == null) emptyList()
+        else _listOrders.value[categoryId] ?: preferences.getString("order_$categoryId", null)
+            ?.split(",")?.filter { it.isNotBlank() }.orEmpty()
+
+    fun moveList(listId: String, offset: Int) {
+        val categoryId = lists.value.find { it.id == listId }?.categoryId ?: return
+        val ids = orderedLists(categoryId).map { it.id }.toMutableList()
+        val from = ids.indexOf(listId)
+        val to = from + offset
+        if (from < 0 || to !in ids.indices) return
+        ids.add(to, ids.removeAt(from))
+        preferences.edit().putString("order_$categoryId", ids.joinToString(",")).apply()
+        _listOrders.value = _listOrders.value + (categoryId to ids)
+    }
+
     private val dao = AppDatabase.getDatabase(application).shoppingDao()
     private val auth = FirebaseAuth.getInstance()
     private val firestore = FirebaseFirestore.getInstance()
@@ -78,7 +102,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
         }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
-    private val _selectedCategoryId = MutableStateFlow<String?>(null)
+    private val _selectedCategoryId = MutableStateFlow<String?>(preferences.getString("category", null))
     val selectedCategoryId: StateFlow<String?> = _selectedCategoryId.asStateFlow()
 
     val catalogAreas: StateFlow<List<CatalogArea>> = selectedCategoryId.flatMapLatest { catId ->
@@ -93,13 +117,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun catalogAreasFor(categoryId: String): Flow<List<CatalogArea>> {
         return dao.getCatalogAreas(categoryId).map { entities ->
-            entities.map { CatalogArea(it.id, it.categoryId, it.name) }
+            entities.map { CatalogArea(it.id, it.categoryId, it.name) }.sortedByCatalogName { it.name }
         }
     }
 
     fun catalogProductsFor(categoryId: String): Flow<List<CatalogProduct>> {
         return dao.getCatalogProducts(categoryId).map { entities ->
-            entities.map { CatalogProduct(it.id, it.categoryId, it.name, it.defaultArea) }
+            entities.map { CatalogProduct(it.id, it.categoryId, it.name, it.defaultArea) }.sortedByCatalogName { it.name }
         }
     }
 
@@ -129,19 +153,22 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
         viewModelScope.launch {
             combine(selectedCategoryId, lists) { catId, allLists ->
-                catId to allLists.filter { it.categoryId == catId }
-                    .sortedWith(compareByDescending<ShoppingList> { it.timestamp }.thenBy { it.name })
+                catId to orderedLists(catId, allLists)
             }.collectLatest { (catId, catLists) ->
                 if (catId != null && (_selectedListId.value == null || catLists.none { it.id == _selectedListId.value })) {
-                    _selectedListId.value = catLists.firstOrNull()?.id
+                    val saved = preferences.getString("list_$catId", null)
+                    selectList(catLists.find { it.id == saved }?.id ?: catLists.firstOrNull()?.id)
                 }
             }
         }
 
         viewModelScope.launch {
-            categories.collectLatest { visible ->
-                if (visible.none { it.id == _selectedCategoryId.value }) {
-                    selectCategory(visible.firstOrNull()?.id)
+            // Validate only real database emissions, not the initial empty UI state.
+            combine(dao.getAllCategories(), currentUser) { entities, user ->
+                entities.filter { it.isVisibleTo(user?.uid) }.map { it.id }
+            }.collectLatest { visibleIds ->
+                if (_selectedCategoryId.value !in visibleIds) {
+                    selectCategory(visibleIds.firstOrNull())
                 }
             }
         }
@@ -448,12 +475,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun selectCategory(id: String?) {
         _selectedCategoryId.value = id
-        // Wir setzen die Listen-ID erst mal auf null, die UI nimmt sich automatisch die erste Liste
-        // oder der combine-Block unten setzt sie, sobald die Daten da sind.
-        _selectedListId.value = null
+        preferences.edit().putString("category", id).apply()
+        _selectedListId.value = id?.let { preferences.getString("list_$it", null) }
     }
 
-    fun selectList(id: String?) { _selectedListId.value = id }
+    fun selectList(id: String?) {
+        _selectedListId.value = id
+        val categoryId = _selectedCategoryId.value
+        if (id != null && categoryId != null) {
+            preferences.edit().putString("list_$categoryId", id).apply()
+        }
+    }
 
     private fun syncCatalogForCategory(categoryId: String) {
         val generation = syncGeneration

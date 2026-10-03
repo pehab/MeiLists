@@ -14,11 +14,13 @@ data class MoveItemTarget(
 
 fun sortedListsForCategory(
     lists: List<ShoppingList>,
-    categoryId: String?
+    categoryId: String?,
+    preferredOrder: List<String> = emptyList()
 ): List<ShoppingList> =
     lists
         .filter { it.categoryId == categoryId }
-        .sortedWith(compareByDescending<ShoppingList> { it.timestamp }.thenBy { it.name })
+        .sortedWith(compareBy<ShoppingList> { preferredOrder.indexOf(it.id).takeIf { index -> index >= 0 } ?: Int.MAX_VALUE }
+            .thenByDescending { it.timestamp }.thenBy { it.name }.thenBy { it.id })
 
 fun moveItemTargets(
     categories: List<Category>,
