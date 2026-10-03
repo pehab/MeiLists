@@ -32,6 +32,13 @@ jobs:
       - name: Test and build debug APK
         run: ./gradlew testDebugUnitTest assembleDebug --warning-mode=all
 
+      - name: Upload generated Room schemas
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: room-schemas
+          path: app/schemas/
+
       - name: Upload debug APK
         uses: actions/upload-artifact@v7
         with:
@@ -52,7 +59,7 @@ jobs:
         run: bash gradlew assembleDebug assembleDebugAndroidTest
       - name: Enable emulator acceleration
         run: sudo chmod 666 /dev/kvm
-      - name: Run Room migration tests on Android 35
+      - name: Run Room migration and recurrence UI tests on Android 35
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 35
@@ -62,7 +69,7 @@ jobs:
           ram-size: 2048M
           disk-size: 2048M
           emulator-boot-timeout: 300
-          script: bash gradlew connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=de.haberland.meilists.AppDatabaseMigrationTest
+          script: bash gradlew connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=de.haberland.meilists.AppDatabaseMigrationTest,de.haberland.meilists.ComponentUiTest#addEntryDialogValidatesRepeatInterval
       - name: Upload migration test reports
         if: always()
         uses: actions/upload-artifact@v7

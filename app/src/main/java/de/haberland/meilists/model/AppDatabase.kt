@@ -9,7 +9,7 @@ import androidx.room.RoomDatabase
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 
-internal const val APP_DATABASE_VERSION = 13
+internal const val APP_DATABASE_VERSION = 14
 
 @Database(
     entities = [CategoryEntity::class, ShoppingListEntity::class, ListItemEntity::class, CatalogAreaEntity::class, CatalogProductEntity::class],
@@ -122,8 +122,15 @@ abstract class AppDatabase : RoomDatabase() {
                 db.execSQL("ALTER TABLE categories_migration_13 RENAME TO categories")
             }
         }
+        internal val MIGRATION_13_14 = object : Migration(13, 14) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE list_items ADD COLUMN repeatEveryDays INTEGER DEFAULT NULL")
+                db.execSQL("ALTER TABLE list_items ADD COLUMN nextDueAt INTEGER DEFAULT NULL")
+            }
+        }
+
         internal val ALL_MIGRATIONS = arrayOf(
-            MIGRATION_2_3, MIGRATION_3_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13
+            MIGRATION_2_3, MIGRATION_3_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14
         )
 
     }

@@ -1,7 +1,7 @@
 # MeiLists
 
 Android-App für Einkaufs- und Aufgabenlisten mit Kotlin und Jetpack Compose.
-Aktueller Stand: **0.2.8**, `versionCode 13`; Paket `de.haberland.meilists`.
+Aktueller Stand: **0.2.9**, `versionCode 14`; Paket `de.haberland.meilists`.
 
 ## Funktionen
 
@@ -12,6 +12,8 @@ Aktueller Stand: **0.2.8**, `versionCode 13`; Paket `de.haberland.meilists`.
 - Lokale Speicherung in Room; optional Firebase-Kategorien mit Google-Anmeldung und Live-Synchronisation.
 - Geteilten Kategorien per Einladungscode beitreten.
 - Einträge hinzufügen, bearbeiten, abhaken, verschieben und löschen.
+- Einträge optional alle 1–3650 Tage ab dem Abhaken wieder öffnen, ohne Duplikate oder Benachrichtigungen. Wiederholung beim Anlegen/Bearbeiten einstellbar; „Erledigte löschen“ behält wiederkehrende Einträge.
+- Fällige Wiederholungen werden beim Öffnen und während der Nutzung als offen angezeigt. Intervall und Fälligkeit werden bei Firebase-Listen geteilt. Ein Tag entspricht 24 Stunden. Bei geändertem Intervall eines noch erledigten Eintrags beginnt die Wartezeit beim Speichern neu.
 - Produkt- und Bereichskatalog, optionale Lernfunktion und Sortierung nach Bereichen.
 - Google-Play-In-App-Updates und Firebase Crashlytics.
 
@@ -63,7 +65,7 @@ GitHub Actions führt Unit-Tests und den Debug-Build aus. Die Datenbank-Migratio
 bash gradlew :app:connectedDebugAndroidTest
 ```
 
-Die Datenbank bleibt auf Version 13. Datenbankversionen und App-Versionen sind unabhängig. Für alle in Git belegten älteren Schemata gibt es jetzt den Pfad 2 → 3 → 10 → 11 → 12 → 13. Die Tests prüfen Kategorien, Freigaben, Listen, abgehakte/offene Einträge, Zeitstempel, Bereiche, Katalogprodukte und deaktiviertes Autolernen. Alte Listen ohne Zeitstempel erhalten 0; neue Felder erhalten fachlich passende Standardwerte.
+Die Datenbank ist auf Version 14. Datenbankversionen und App-Versionen sind unabhängig. Für alle in Git belegten älteren Schemata gibt es jetzt den Pfad 2 → 3 → 10 → 11 → 12 → 13 → 14. Die Tests prüfen Kategorien, Freigaben, Listen, abgehakte/offene Einträge, Zeitstempel, Bereiche, Katalogprodukte und deaktiviertes Autolernen. Alte Listen ohne Zeitstempel erhalten 0; neue Felder erhalten fachlich passende Standardwerte.
 
 Der automatische destruktive Fallback ist entfernt. Unbekannte Versionen und Downgrades werden beim Öffnen abgewiesen, ohne den Datenbestand zu löschen. Das ist kein automatischer Reparaturmodus: Bei einem solchen Fehler die App-Daten nicht löschen und die App nicht deinstallieren; eine passende Migration muss ergänzt werden. Bereits durch frühere App-Versionen gelöschte Daten lassen sich dadurch nicht wiederherstellen.
 

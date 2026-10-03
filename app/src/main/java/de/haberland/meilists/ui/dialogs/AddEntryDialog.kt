@@ -52,11 +52,14 @@ enum class AddType { CATEGORY, LIST, ITEM }
 fun AddEntryDialog(
     type: AddType,
     onDismiss: () -> Unit,
-    onConfirm: (String, Color?, String?, String?, Boolean, Boolean) -> Unit,
+    onConfirm: (String, Color?, String?, String?, Boolean, Boolean, Int?) -> Unit,
     catalogProducts: List<CatalogProduct> = emptyList(),
     catalogAreas: List<CatalogArea> = emptyList(),
     allCategories: List<Category> = emptyList()
 ) {
+    var repeatEnabled by remember { mutableStateOf(false) }
+    var repeatDays by remember { mutableStateOf("2") }
+    val validRepeat = !repeatEnabled || de.haberland.meilists.domain.validRepeatDays(repeatDays.toIntOrNull()) != null
     var text by remember { mutableStateOf("") }
     var area by remember { mutableStateOf("") }
     var selectedColor by remember { mutableStateOf(Color(0xFF6200EE)) }
@@ -150,6 +153,7 @@ fun AddEntryDialog(
                         areaSuggestions = areaSuggestions,
                         catalogAreas = catalogAreas
                     )
+                    RepeatInput(repeatEnabled, repeatDays, { repeatEnabled = it }, { repeatDays = it })
                 }
 
                 if (type == AddType.CATEGORY) {
@@ -186,6 +190,7 @@ fun AddEntryDialog(
         },
         confirmButton = {
             Button(
+                enabled = text.isNotBlank() && (type != AddType.ITEM || validRepeat),
                 onClick = {
                     if (text.isNotBlank()) {
                         onConfirm(
@@ -194,7 +199,8 @@ fun AddEntryDialog(
                             area.ifBlank { null },
                             importSource?.id,
                             importAreas,
-                            importProducts
+                            importProducts,
+                            if (type == AddType.ITEM && repeatEnabled) repeatDays.toIntOrNull() else null
                         )
                     }
                 }

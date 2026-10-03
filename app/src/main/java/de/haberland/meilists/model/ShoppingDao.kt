@@ -44,7 +44,7 @@ interface ShoppingDao {
     @Query("DELETE FROM list_items WHERE id = :itemId")
     suspend fun deleteItem(itemId: String)
 
-    @Query("DELETE FROM list_items WHERE listId = :listId AND isChecked = 1")
+    @Query("DELETE FROM list_items WHERE listId = :listId AND isChecked = 1 AND repeatEveryDays IS NULL")
     suspend fun deleteCheckedItems(listId: String)
 
     @Query("DELETE FROM list_items WHERE listId = :listId")

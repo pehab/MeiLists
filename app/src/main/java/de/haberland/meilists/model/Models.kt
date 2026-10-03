@@ -36,7 +36,9 @@ data class ListItem(
     val text: String,
     val isChecked: Boolean = false,
     val timestamp: Long = System.currentTimeMillis(),
-    val area: String? = null
+    val area: String? = null,
+    val repeatEveryDays: Int? = null,
+    val nextDueAt: Long? = null
 )
 
 data class CatalogArea(

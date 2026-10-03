@@ -29,6 +29,10 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.delay
+import de.haberland.meilists.domain.isEffectivelyChecked
+import de.haberland.meilists.domain.nextRepeatDueAt
+import de.haberland.meilists.domain.validRepeatDays
 import kotlinx.coroutines.tasks.await
 
 sealed class UiEvent {
@@ -135,9 +139,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _selectedListId = MutableStateFlow<String?>(null)
     val selectedListId: StateFlow<String?> = _selectedListId.asStateFlow()
 
-    val items: StateFlow<List<ListItem>> = combine(dao.getAllItems(), lists) { entities, visibleLists ->
+    private val recurrenceClock = flow {
+        while (true) {
+            emit(System.currentTimeMillis())
+            delay(15_000)
+        }
+    }
+
+    val items: StateFlow<List<ListItem>> = combine(dao.getAllItems(), lists, recurrenceClock) { entities, visibleLists, now ->
             val listIds = visibleLists.map { it.id }.toSet()
-            entities.filter { it.listId in listIds }.map { ListItem(it.id, it.listId, it.text, it.isChecked, it.timestamp, it.area) }
+            entities.filter { it.listId in listIds }.map { ListItem(it.id, it.listId, it.text, isEffectivelyChecked(it.isChecked, it.repeatEveryDays, it.nextDueAt, now), it.timestamp, it.area, validRepeatDays(it.repeatEveryDays), it.nextDueAt) }
         }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     init {
@@ -385,7 +396,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                                     text = doc.getString("text") ?: "",
                                     isChecked = doc.getBoolean("isChecked") ?: false,
                                     timestamp = doc.getLong("timestamp") ?: 0L,
-                                    area = doc.getString("area")
+                                    area = doc.getString("area"),
+                                    repeatEveryDays = doc.getLong("repeatEveryDays")?.takeIf { it in 1L..3650L }?.toInt(),
+                                    nextDueAt = doc.getLong("nextDueAt")
                                 ))
                             }
                         }
@@ -556,7 +569,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         activeListeners["catalog_products_$categoryId"] = productListener
     }
 
-    fun addItem(listId: String, text: String, area: String? = null) {
+    fun addItem(listId: String, text: String, area: String? = null, repeatEveryDays: Int? = null) {
         viewModelScope.launch {
             val id = java.util.UUID.randomUUID().toString()
             val timestamp = System.currentTimeMillis()
@@ -570,7 +583,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
 
             // IMMER lokal speichern (Offline First)
-            dao.insertItem(ListItemEntity(id, listId, text, false, timestamp, area))
+            dao.insertItem(ListItemEntity(id, listId, text, false, timestamp, area, validRepeatDays(repeatEveryDays)))
 
             if (category?.settings?.type == StorageType.FIREBASE) {
                 try {
@@ -579,7 +592,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         "text" to text, 
                         "isChecked" to false, 
                         "timestamp" to timestamp,
-                        "area" to area
+                        "area" to area,
+                        "repeatEveryDays" to validRepeatDays(repeatEveryDays),
+                        "nextDueAt" to null
                     )).await()
                 } catch (e: Exception) {
                 if (e is CancellationException) throw e
@@ -642,13 +657,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun toggleItem(itemId: String) {
         viewModelScope.launch {
             val item = items.value.find { it.id == itemId } ?: return@launch
-            val newChecked = !item.isChecked
-            dao.updateItem(ListItemEntity(item.id, item.listId, item.text, newChecked, item.timestamp, item.area))
+            val now = System.currentTimeMillis()
+            val newChecked = !isEffectivelyChecked(item.isChecked, item.repeatEveryDays, item.nextDueAt, now)
+            val nextDueAt = if (newChecked) nextRepeatDueAt(item.repeatEveryDays, now) else null
+            dao.updateItem(ListItemEntity(item.id, item.listId, item.text, newChecked, item.timestamp, item.area, item.repeatEveryDays, nextDueAt))
             val list = lists.value.find { it.id == item.listId }
             val category = categories.value.find { it.id == list?.categoryId }
             if (category?.settings?.type == StorageType.FIREBASE) {
                 try {
-                    firestore.collection("list_items").document(itemId).update("isChecked", newChecked).await()
+                    firestore.collection("list_items").document(itemId).update(mapOf("isChecked" to newChecked, "repeatEveryDays" to item.repeatEveryDays, "nextDueAt" to nextDueAt)).await()
                 } catch (e: Exception) {
                 if (e is CancellationException) throw e
                     Log.e("MeiLists", "Fehler beim Firebase-Update (Item): ${e.message}")
@@ -657,17 +674,25 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun updateItem(itemId: String, newText: String, newArea: String?) {
+    fun updateItem(itemId: String, newText: String, newArea: String?, repeatEveryDays: Int?) {
         viewModelScope.launch {
             val item = items.value.find { it.id == itemId } ?: return@launch
-            dao.updateItem(ListItemEntity(item.id, item.listId, newText, item.isChecked, item.timestamp, newArea))
+            val days = validRepeatDays(repeatEveryDays)
+            val checked = isEffectivelyChecked(item.isChecked, item.repeatEveryDays, item.nextDueAt, System.currentTimeMillis())
+            val nextDueAt = if (!checked || days == null) null
+                else if (days == item.repeatEveryDays && item.nextDueAt != null) item.nextDueAt
+                else nextRepeatDueAt(days, System.currentTimeMillis())
+            dao.updateItem(ListItemEntity(item.id, item.listId, newText, checked, item.timestamp, newArea, days, nextDueAt))
             val list = lists.value.find { it.id == item.listId }
             val category = categories.value.find { it.id == list?.categoryId }
             if (category?.settings?.type == StorageType.FIREBASE) {
                 try {
                     firestore.collection("list_items").document(itemId).update(mapOf(
                         "text" to newText,
-                        "area" to newArea
+                        "area" to newArea,
+                        "isChecked" to checked,
+                        "repeatEveryDays" to days,
+                        "nextDueAt" to nextDueAt
                     )).await()
                 } catch (e: Exception) {
                 if (e is CancellationException) throw e
@@ -696,9 +721,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
             if (sourceIsFirebase && !targetIsFirebase) {
                 dao.deleteItem(item.id)
-                dao.insertItem(ListItemEntity(targetItemId, targetListId, item.text, item.isChecked, item.timestamp, item.area))
+                dao.insertItem(ListItemEntity(targetItemId, targetListId, item.text, item.isChecked, item.timestamp, item.area, item.repeatEveryDays, item.nextDueAt))
             } else {
-                dao.updateItem(ListItemEntity(targetItemId, targetListId, item.text, item.isChecked, item.timestamp, item.area))
+                dao.updateItem(ListItemEntity(targetItemId, targetListId, item.text, item.isChecked, item.timestamp, item.area, item.repeatEveryDays, item.nextDueAt))
             }
 
             if (sourceList.categoryId != targetList.categoryId && targetCategory?.settings?.autoLearningEnabled == true) {
@@ -714,7 +739,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                             "text" to item.text,
                             "isChecked" to item.isChecked,
                             "timestamp" to item.timestamp,
-                            "area" to item.area
+                            "area" to item.area,
+                            "repeatEveryDays" to item.repeatEveryDays,
+                            "nextDueAt" to item.nextDueAt
                         )).await()
                     }
                     sourceIsFirebase -> {
@@ -748,7 +775,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun deleteCheckedItems(listId: String) {
         viewModelScope.launch {
-            val checkedItems = items.value.filter { it.listId == listId && it.isChecked }
+            val checkedItems = items.value.filter { it.listId == listId && it.isChecked && it.repeatEveryDays == null }
             dao.deleteCheckedItems(listId)
             val list = lists.value.find { it.id == listId }
             val category = categories.value.find { it.id == list?.categoryId }

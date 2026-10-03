@@ -130,7 +130,7 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
                     categoryColor = currentCategory?.color,
                     hasActiveList = effectiveListId != null,
                     hasCheckedItems = effectiveListId?.let { listId ->
-                        items.any { it.listId == listId && it.isChecked }
+                        items.any { it.listId == listId && it.isChecked && it.repeatEveryDays == null }
                     } == true,
                     sortByArea = currentList?.sortByArea == true,
                     listMenuExpanded = showListMenu,
@@ -199,11 +199,11 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
         AddEntryDialog(
             type = type,
             onDismiss = { showAddDialog = null },
-            onConfirm = { name, color, area, importId, impA, impP ->
+            onConfirm = { name, color, area, importId, impA, impP, repeatDays ->
                 when (type) {
                     AddType.CATEGORY -> viewModel.addCategory(name, color?.toArgb()?.toLong() ?: 0xFF6200EE, importId, impA, impP)
                     AddType.LIST -> selectedCategoryId?.let { viewModel.addList(it, name) }
-                    AddType.ITEM -> effectiveListId?.let { viewModel.addItem(it, name, area) }
+                    AddType.ITEM -> effectiveListId?.let { viewModel.addItem(it, name, area, repeatDays) }
                 }
                 showAddDialog = null
             },
@@ -293,8 +293,8 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
         EditItemDialog(
             item = item,
             onDismiss = { editingItem = null },
-            onConfirm = { text, area ->
-                viewModel.updateItem(item.id, text, area)
+            onConfirm = { text, area, repeatDays ->
+                viewModel.updateItem(item.id, text, area, repeatDays)
                 editingItem = null
             }
         )

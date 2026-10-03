@@ -56,6 +56,13 @@ fun ListItemRow(
                     MaterialTheme.colorScheme.onSurface
                 }
             )
+            item.repeatEveryDays?.let { days ->
+                Text(
+                    text = if (days == 1) "Wiederholt sich täglich" else "Wiederholt sich alle $days Tage",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
             if (!item.area.isNullOrBlank()) {
                 Surface(
                     color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = if (item.isChecked) 0.3f else 1f),

@@ -6,6 +6,7 @@ import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import de.haberland.meilists.model.AppDatabase
 import de.haberland.meilists.model.CategoryEntity
+import de.haberland.meilists.model.ListItemEntity
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import org.junit.After
@@ -88,6 +89,12 @@ class AppDatabaseMigrationTest {
     }
 
     @Test
+    fun migration13To14KeepsItemsAndDisablesRecurrenceByDefault() = runBlocking {
+        createDatabase(13, includeAutoLearning = true, autoLearningHasDefault = true)
+        assertEquals(1, readMigratedCategories().size)
+    }
+
+    @Test
     fun currentSchemaReopensWithoutLosingData() = runBlocking {
         createVersion11Database()
         val first = readMigratedCategories()
@@ -95,8 +102,31 @@ class AppDatabaseMigrationTest {
     }
 
     @Test
+    fun recurringItemsKeepScheduleAcrossReopenAndBulkCleanup() = runBlocking {
+        val database = AppDatabase.builder(context, TEST_DB).build()
+        try {
+            val dao = database.shoppingDao()
+            dao.insertItem(ListItemEntity("repeat", "list", "Water plants", true, 1, null, 2, 172800001))
+            dao.insertItem(ListItemEntity("ordinary", "list", "Milk", true, 1))
+            dao.deleteCheckedItems("list")
+            assertEquals(listOf("repeat"), dao.getAllItems().first().map { it.id })
+        } finally {
+            database.close()
+        }
+        val reopened = AppDatabase.builder(context, TEST_DB).build()
+        try {
+            val item = reopened.shoppingDao().getAllItems().first().single()
+            assertEquals(2, item.repeatEveryDays!!)
+            assertEquals(172800001L, item.nextDueAt!!)
+            assertTrue(item.isChecked)
+        } finally {
+            reopened.close()
+        }
+    }
+
+    @Test
     fun unknownVersionAndDowngradeKeepOriginalDatabase() {
-        for (version in listOf(1, 4, 14)) {
+        for (version in listOf(1, 4, 15)) {
             context.deleteDatabase(TEST_DB)
             createDatabase(version, includeAutoLearning = false, autoLearningHasDefault = false)
             val database = AppDatabase.builder(context, TEST_DB).allowMainThreadQueries().build()
@@ -135,6 +165,8 @@ class AppDatabaseMigrationTest {
             val items = dao.getAllItems().first()
             assertEquals(2, items.size)
             val item = items.single { it.id == "item1" }
+            assertEquals(null, item.repeatEveryDays)
+            assertEquals(null, item.nextDueAt)
             assertEquals("list1", item.listId)
             assertEquals("Milk", item.text)
             assertTrue(item.isChecked)
