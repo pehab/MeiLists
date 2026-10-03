@@ -27,6 +27,18 @@ class ListDisplayLogicTest {
     }
 
     @Test
+    fun manualOrderIgnoresDeletedIdsAndAppendsNewLists() {
+        val lists = listOf(
+            ShoppingList(id = "a", categoryId = "cat", name = "A", timestamp = 1),
+            ShoppingList(id = "b", categoryId = "cat", name = "B", timestamp = 2),
+            ShoppingList(id = "new", categoryId = "cat", name = "New", timestamp = 3),
+            ShoppingList(id = "other", categoryId = "other", name = "Other", timestamp = 4)
+        )
+        assertEquals(listOf("a", "b", "new"),
+            sortedListsForCategory(lists, "cat", listOf("deleted", "a", "b", "other")).map { it.id })
+    }
+
+    @Test
     fun sortedListsForCategoryReturnsEmptyListWhenNoCategoryIsSelected() {
         val lists = listOf(ShoppingList(id = "list1", categoryId = "cat1", name = "A"))
 

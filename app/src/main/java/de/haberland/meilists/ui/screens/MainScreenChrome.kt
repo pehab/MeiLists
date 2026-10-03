@@ -231,6 +231,7 @@ fun ShoppingTopAppBar(
     onListMenuClick: () -> Unit,
     onListMenuDismiss: () -> Unit,
     onRenameList: () -> Unit,
+    onReorderLists: () -> Unit,
     onToggleSortByArea: () -> Unit,
     onDeleteList: () -> Unit
 ) {
@@ -257,6 +258,10 @@ fun ShoppingTopAppBar(
                         expanded = listMenuExpanded,
                         onDismissRequest = onListMenuDismiss
                     ) {
+                        DropdownMenuItem(
+                            text = { Text("Listenreihenfolge") },
+                            onClick = onReorderLists
+                        )
                         DropdownMenuItem(
                             text = { Text("Liste umbenennen") },
                             onClick = onRenameList,

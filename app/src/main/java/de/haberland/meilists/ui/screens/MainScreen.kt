@@ -26,7 +26,6 @@ import com.google.android.play.core.install.model.AppUpdateType
 import de.haberland.meilists.MainViewModel
 import de.haberland.meilists.UiEvent
 import de.haberland.meilists.domain.filteredAndSortedItemsForDisplay
-import de.haberland.meilists.domain.sortedListsForCategory
 import de.haberland.meilists.model.ListItem
 import de.haberland.meilists.ui.dialogs.AddEntryDialog
 import de.haberland.meilists.ui.dialogs.AddType
@@ -45,6 +44,7 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
     val categories by viewModel.categories.collectAsState()
     val selectedCategoryId by viewModel.selectedCategoryId.collectAsState()
     val lists by viewModel.lists.collectAsState()
+    val listOrders by viewModel.listOrders.collectAsState()
     val selectedListId by viewModel.selectedListId.collectAsState()
     val items by viewModel.items.collectAsState()
     val catalogAreas by viewModel.catalogAreas.collectAsState()
@@ -59,12 +59,13 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
     var showJoinDialog by remember { mutableStateOf(false) }
     var showListMenu by remember { mutableStateOf(false) }
     var showDeleteListConfirm by remember { mutableStateOf(false) }
+    var showOrderDialog by remember { mutableStateOf(false) }
     var showRenameListDialog by remember { mutableStateOf(false) }
     var editingItem by remember { mutableStateOf<ListItem?>(null) }
     var movingItem by remember { mutableStateOf<ListItem?>(null) }
 
     val currentCategory = categories.find { it.id == selectedCategoryId }
-    val categoryLists = sortedListsForCategory(lists, selectedCategoryId)
+    val categoryLists = remember(lists, selectedCategoryId, listOrders) { viewModel.orderedLists(selectedCategoryId, lists) }
     
     val effectiveListId = selectedListId ?: categoryLists.firstOrNull()?.id
     val currentList = categoryLists.find { it.id == effectiveListId }
@@ -139,6 +140,10 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
                     },
                     onListMenuClick = { showListMenu = true },
                     onListMenuDismiss = { showListMenu = false },
+                    onReorderLists = {
+                        showListMenu = false
+                        showOrderDialog = true
+                    },
                     onRenameList = {
                         showListMenu = false
                         showRenameListDialog = true
@@ -179,6 +184,14 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
                 modifier = Modifier.padding(innerPadding)
             )
         }
+    }
+
+    if (showOrderDialog) {
+        de.haberland.meilists.ui.dialogs.ListOrderDialog(
+            lists = categoryLists,
+            onMove = viewModel::moveList,
+            onDismiss = { showOrderDialog = false }
+        )
     }
 
     // Dialogs
