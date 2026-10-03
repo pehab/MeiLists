@@ -84,7 +84,7 @@ class ComponentUiTest {
                 AddEntryDialog(
                     type = AddType.ITEM,
                     onDismiss = {},
-                    onConfirm = { name, color, area, importId, importAreas, importProducts ->
+                    onConfirm = { name, color, area, importId, importAreas, importProducts, _ ->
                         confirmed = ConfirmedEntry(name, color, area, importId, importAreas, importProducts)
                     },
                     catalogProducts = listOf(

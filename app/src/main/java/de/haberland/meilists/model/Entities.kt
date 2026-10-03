@@ -34,7 +34,11 @@ data class ListItemEntity(
     val text: String,
     val isChecked: Boolean,
     val timestamp: Long,
-    val area: String? = null
+    val area: String? = null,
+    @ColumnInfo(defaultValue = "NULL")
+    val repeatEveryDays: Int? = null,
+    @ColumnInfo(defaultValue = "NULL")
+    val nextDueAt: Long? = null
 )
 
 @Entity(tableName = "catalog_areas")

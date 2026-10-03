@@ -1,6 +1,8 @@
 package de.haberland.meilists.ui.dialogs
 
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -34,8 +36,11 @@ import de.haberland.meilists.model.ShoppingList
 fun EditItemDialog(
     item: ListItem,
     onDismiss: () -> Unit,
-    onConfirm: (String, String?) -> Unit
+    onConfirm: (String, String?, Int?) -> Unit
 ) {
+    var repeatEnabled by remember(item.id) { mutableStateOf(item.repeatEveryDays != null) }
+    var repeatDays by remember(item.id) { mutableStateOf((item.repeatEveryDays ?: 2).toString()) }
+    val validRepeat = !repeatEnabled || de.haberland.meilists.domain.validRepeatDays(repeatDays.toIntOrNull()) != null
     var text by remember(item.id) { mutableStateOf(item.text) }
     var area by remember(item.id) { mutableStateOf(item.area ?: "") }
 
@@ -43,7 +48,7 @@ fun EditItemDialog(
         onDismissRequest = onDismiss,
         title = { Text("Eintrag bearbeiten") },
         text = {
-            Column {
+            Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
                 OutlinedTextField(
                     value = text,
                     onValueChange = { text = it },
@@ -59,10 +64,11 @@ fun EditItemDialog(
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
                 )
+                RepeatInput(repeatEnabled, repeatDays, { repeatEnabled = it }, { repeatDays = it })
             }
         },
         confirmButton = {
-            Button(onClick = { if (text.isNotBlank()) onConfirm(text, area.ifBlank { null }) }) {
+            Button(enabled = text.isNotBlank() && validRepeat, onClick = { onConfirm(text, area.ifBlank { null }, if (repeatEnabled) repeatDays.toIntOrNull() else null) }) {
                 Text("Speichern")
             }
         },

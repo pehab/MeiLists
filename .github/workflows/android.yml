@@ -32,6 +32,13 @@ jobs:
       - name: Test and build debug APK
         run: ./gradlew testDebugUnitTest assembleDebug --warning-mode=all
 
+      - name: Upload generated Room schemas
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: room-schemas
+          path: app/schemas/
+
       - name: Upload debug APK
         uses: actions/upload-artifact@v7
         with:

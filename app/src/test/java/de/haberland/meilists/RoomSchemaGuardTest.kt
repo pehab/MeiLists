@@ -61,7 +61,7 @@ class RoomSchemaGuardTest {
     }
 
     private companion object {
-        const val EXPECTED_DATABASE_VERSION = 13
+        const val EXPECTED_DATABASE_VERSION = 14
         const val EXPECTED_SCHEMA_SHA256 = "9e153104e999b2d69df6eabc03d157730a6d40d21ca5757b4aecc5f6b1f4e819"
     }
 }
