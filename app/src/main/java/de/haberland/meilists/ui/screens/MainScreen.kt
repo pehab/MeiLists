@@ -130,7 +130,7 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
                     categoryColor = currentCategory?.color,
                     hasActiveList = effectiveListId != null,
                     hasCheckedItems = effectiveListId?.let { listId ->
-                        items.any { it.listId == listId && it.isChecked }
+                        items.any { it.listId == listId && it.isChecked && it.repeatEveryDays == null }
                     } == true,
                     sortByArea = currentList?.sortByArea == true,
                     listMenuExpanded = showListMenu,

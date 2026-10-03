@@ -2,6 +2,9 @@ package de.haberland.meilists
 
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsNotEnabled
+import androidx.compose.ui.test.assertIsEnabled
+import androidx.compose.ui.test.performTextReplacement
 import androidx.compose.ui.test.assertIsOff
 import androidx.compose.ui.test.assertIsOn
 import androidx.compose.ui.test.hasSetTextAction
@@ -108,6 +111,27 @@ class ComponentUiTest {
             assertEquals(null, confirmed?.color)
             assertEquals(null, confirmed?.importId)
         }
+    }
+
+    @Test
+    fun addEntryDialogValidatesRepeatInterval() {
+        var confirmedDays: Int? = null
+        composeTestRule.setContent {
+            MeiListsTheme {
+                AddEntryDialog(
+                    type = AddType.ITEM,
+                    onDismiss = {},
+                    onConfirm = { _, _, _, _, _, _, days -> confirmedDays = days }
+                )
+            }
+        }
+        composeTestRule.onAllNodes(hasSetTextAction())[0].performTextInput("Water plants")
+        composeTestRule.onNode(isToggleable()).performClick()
+        composeTestRule.onNodeWithText("Alle X Tage").performTextReplacement("0")
+        composeTestRule.onNodeWithText("Hinzufügen").assertIsNotEnabled()
+        composeTestRule.onNodeWithText("Alle X Tage").performTextReplacement("2")
+        composeTestRule.onNodeWithText("Hinzufügen").assertIsEnabled().performClick()
+        composeTestRule.runOnIdle { assertEquals(2, confirmedDays!!) }
     }
 
     @Test
