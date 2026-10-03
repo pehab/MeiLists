@@ -91,7 +91,7 @@ class AppDatabaseMigrationTest {
     @Test
     fun migration13To14KeepsItemsAndDisablesRecurrenceByDefault() = runBlocking {
         createDatabase(13, includeAutoLearning = true, autoLearningHasDefault = true)
-        readMigratedCategories()
+        assertEquals(1, readMigratedCategories().size)
     }
 
     @Test
