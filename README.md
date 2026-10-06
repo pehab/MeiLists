@@ -1,7 +1,7 @@
 # MeiLists
 
 Android-App für Einkaufs- und Aufgabenlisten mit Kotlin und Jetpack Compose.
-Aktueller Stand: **0.2.9**, `versionCode 14`; Paket `de.haberland.meilists`.
+Aktueller Stand: **0.2.10**, `versionCode 15`; Paket `de.haberland.meilists`.
 
 ## Funktionen
 
