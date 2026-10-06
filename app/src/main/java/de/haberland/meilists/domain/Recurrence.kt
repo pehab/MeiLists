@@ -1,11 +1,27 @@
 package de.haberland.meilists.domain
 
-private const val DAY_MILLIS = 86_400_000L
+import java.time.Instant
+import java.time.ZoneId
 
 fun validRepeatDays(days: Int?): Int? = days?.takeIf { it in 1..3650 }
 
-fun nextRepeatDueAt(days: Int?, completedAt: Long): Long? =
-    validRepeatDays(days)?.let { Math.addExact(completedAt, it.toLong() * DAY_MILLIS) }
+/**
+ * Repeating list items become due at the start of the local calendar day,
+ * not exactly N * 24 hours after they were completed.
+ */
+fun nextRepeatDueAt(
+    days: Int?,
+    completedAt: Long,
+    zone: ZoneId = ZoneId.systemDefault(),
+): Long? = validRepeatDays(days)?.let { repeatDays ->
+    Instant.ofEpochMilli(completedAt)
+        .atZone(zone)
+        .toLocalDate()
+        .plusDays(repeatDays.toLong())
+        .atStartOfDay(zone)
+        .toInstant()
+        .toEpochMilli()
+}
 
 /** Due items are open on every client without a competing cloud reset write. */
 fun isEffectivelyChecked(checked: Boolean, days: Int?, nextDueAt: Long?, now: Long): Boolean =
