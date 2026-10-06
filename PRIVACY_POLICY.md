@@ -1,55 +1,55 @@
-# Privacy Policy
+# Privacy Policy – MeiLists
 
-This privacy policy applies to the MeiLists app (herein referred to as "Application") for mobile devices that was created by pehab (herein referred to as "Service Provider") as a Free service. This service is intended for use "AS IS".
+MeiLists is an Android application for shopping lists and task lists. It can be used with local lists and optionally with cloud-synchronized/shared lists.
 
-## Information Collection and Use
+## Local data
 
-The Application collects and uses information to provide and improve the service. The following third-party services are used, which may collect information used to identify you:
+Local categories, lists, list entries, catalog data and app settings are stored on the device using the app's local database. This local content is not uploaded unless the user uses a Firebase-backed cloud category.
 
-*   [Google Play Services](https://www.google.com/policies/privacy/)
-*   [Google Analytics for Firebase](https://firebase.google.com/policies/analytics)
-*   [Firebase Crashlytics](https://firebase.google.com/support/privacy/)
-*   [Google Sign-In / Credentials](https://policies.google.com/privacy)
+Local data can be removed using the app's deletion functions, by clearing the app data, or by uninstalling MeiLists.
 
-### Personal Data
+## Firebase cloud features
 
-While using our Application, we may ask you to provide us with certain personally identifiable information, including but not limited to:
-*   Email address (when using Google Sign-In or Firebase Auth)
-*   Unique device identifiers (for analytics and crash reporting)
+For optional cloud categories MeiLists uses:
 
-### Usage Data
+- **Firebase Authentication / Google Sign-In** to identify the signed-in user;
+- **Cloud Firestore** to synchronize categories, lists, entries, catalogs and sharing information;
+- **Firebase Crashlytics** to diagnose crashes and improve app stability.
 
-The Service Provider may also collect information that your browser or device sends whenever you visit or use the Application. This includes information such as your device's Internet Protocol ("IP") address, device name, operating system version, the configuration of the app when utilizing the service, the time and date of your use, and other statistics.
+Cloud data can include the signed-in user's Firebase account identifier and email address, list/category content created or shared by users, membership/sharing information and catalog content.
 
-## Data Storage (Firebase Firestore)
+Crash reports can contain technical information such as app version, device and operating-system information, stack traces, app state and diagnostic identifiers.
 
-MeiLists allows you to store shopping lists and categories. If you use the cloud synchronization feature, this data is stored securely on Google Firebase servers. The Service Provider does not sell your list data to third parties.
+MeiLists does **not** include Firebase Analytics and does not contain advertising SDKs.
 
-## Log Data
+## Google services
 
-In case of an error in the Application, data and information (through third-party products) called Log Data is collected on your phone. This Log Data may include information such as your device IP address, device name, operating system version, the configuration of the app when utilizing the service, the time and date of your use of the service, and other statistics.
+Google/Firebase processes data required to provide authentication, Firestore synchronization, Crashlytics and Google Play functionality.
 
-## Cookies
+- Google Privacy Policy: https://policies.google.com/privacy
+- Firebase Privacy and Security: https://firebase.google.com/support/privacy/
 
-This Application does not use "cookies" explicitly. However, the app may use third-party code and libraries that use "cookies" to collect information and improve their services.
+## Data sharing
+
+Personal data is not sold. Cloud list data is available to users to whom the relevant category is shared according to its configured permissions. Google/Firebase processes cloud and technical data as required to provide the services described above.
+
+## Data deletion
+
+Local data can be deleted in the app where supported, by clearing app data, or by uninstalling the application. Cloud records remain subject to their category ownership and sharing relationships. Questions or deletion requests for cloud data can be sent to the contact address below.
 
 ## Security
 
-The Service Provider values your trust in providing your Personal Information, thus we are striving to use commercially acceptable means of protecting it. But remember that no method of transmission over the internet, or method of electronic storage is 100% secure and reliable.
+The application uses Firebase authentication and server-side Firestore access rules for cloud data. No method of electronic storage or transmission can guarantee absolute security.
 
-## Children's Privacy
+## Children
 
-The Application does not address anyone under the age of 13. The Service Provider does not knowingly collect personally identifiable information from children under 13 years of age. If it is discovered that a child under 13 has provided personal information, this will be immediately deleted from the servers.
+MeiLists is not specifically directed at children.
 
-## Changes to This Privacy Policy
+## Changes
 
-The Service Provider may update the Privacy Policy from time to time. You are advised to review this page periodically for any changes.
+This privacy policy may be updated when the application's functionality or services change. The current version is published in this repository.
 
-## Contact Us
+## Contact
 
-If you have any questions or suggestions about the Privacy Policy, do not hesitate to contact the Service Provider at:
-
-**Email:** phaberland@googlemail.com
-
----
-*This privacy policy was generated for MeiLists.*
+Email: phaberland@googlemail.com  
+GitHub: https://github.com/pehab/MeiLists
