@@ -1,7 +1,11 @@
 # MeiLists
 
+## Sicherheitsupdate 0.2.11
+
+Geräteprotokolle enthalten keine Konto-E-Mail, Firebase-UID, Kategoriekennungen, Produkttexte oder vollständigen Ausnahmebeschreibungen und Stacktraces mehr. Technische Vorgänge und Fehlertypen bleiben für die Diagnose sichtbar. Die Cloud-Zugriffsregeln benötigen ein gesondertes Backend-Update; sie wurden nicht verändert oder deployt.
+
 Android-App für Einkaufs- und Aufgabenlisten mit Kotlin und Jetpack Compose.
-Aktueller Stand: **0.2.10**, `versionCode 15`; Paket `de.haberland.meilists`.
+Aktueller Stand: **0.2.11**, `versionCode 16`; Paket `de.haberland.meilists`.
 
 ## Funktionen
 
