@@ -36,8 +36,8 @@ android {
         //noinspection AndroidLintEditedTargetSdkVersion
         //noinspection EditedTargetSdkVersion
         targetSdk = 37
-        versionCode = 15
-        versionName = "0.2.10"
+        versionCode = 16
+        versionName = "0.2.11"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
             useSupportLibrary = true
