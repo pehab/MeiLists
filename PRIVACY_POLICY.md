@@ -53,3 +53,7 @@ This privacy policy may be updated when the application's functionality or servi
 
 Email: phaberland@googlemail.com  
 GitHub: https://github.com/pehab/MeiLists
+
+## Updates nach Installationsquelle
+
+Die App liest lokal die von Android gemeldete Installationsquelle. Bei Google-Play-Installationen laufen Updates über Google Play; dabei wird kein GitHub-Updatefeed abgefragt. Direkt installierte APKs können beim Öffnen/Fortsetzen einmal täglich und auf manuelle Anfrage nach GitHub-Updates suchen. Die automatische Prüfung ist abschaltbar. GitHub erhält dabei technisch notwendige Verbindungsdaten wie IP-Adresse und HTTP-Header. Spielstände, Listen, Trainingsdaten, Kontakte und Zugangsdaten werden durch die Updatefunktion nicht übertragen. Downloads und Installation erfolgen nach Bestätigung; Signatur und Paketidentität werden geprüft.

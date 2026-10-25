@@ -68,7 +68,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val firestore = FirebaseFirestore.getInstance()
     private val credentialManager = CredentialManager.create(application)
     private val crashlytics = FirebaseCrashlytics.getInstance()
-    private val appUpdateManager = AppUpdateManagerFactory.create(application)
+    private val appUpdateManager by lazy { AppUpdateManagerFactory.create(getApplication()) }
 
     private val syncSession = SyncSession(viewModelScope, ::reportSyncError)
     private val syncGeneration get() = syncSession.generation
@@ -188,6 +188,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun checkForUpdates() {
+        if (!de.meiapps.updates.UpdateSource.isPlay(getApplication())) return
         appUpdateManager.appUpdateInfo.addOnSuccessListener { info ->
             if (info.updateAvailability() == UpdateAvailability.UPDATE_AVAILABLE && 
                 info.isUpdateTypeAllowed(AppUpdateType.IMMEDIATE)) {

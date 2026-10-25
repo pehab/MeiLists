@@ -10,6 +10,7 @@ import de.haberland.meilists.ui.theme.MeiListsTheme
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        de.meiapps.updates.GitHubUpdates.attach(this, "pehab/MeiLists") { }
         enableEdgeToEdge()
         setContent {
             MeiListsTheme {

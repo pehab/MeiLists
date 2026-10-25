@@ -119,6 +119,10 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
                 onJoinCategoryClick = {
                     showJoinDialog = true
                     scope.launch { drawerState.close() }
+                },
+                onAppUpdates = {
+                    scope.launch { drawerState.close() }
+                    de.meiapps.updates.GitHubUpdates.showSettings(context, "pehab/MeiLists")
                 }
             )
         }
