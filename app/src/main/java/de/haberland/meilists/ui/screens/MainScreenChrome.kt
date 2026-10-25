@@ -63,7 +63,8 @@ fun MainNavigationDrawerContent(
     onSelectCategory: (String) -> Unit,
     onCategorySettingsClick: (Category) -> Unit,
     onAddCategoryClick: () -> Unit,
-    onJoinCategoryClick: () -> Unit
+    onJoinCategoryClick: () -> Unit,
+    onAppUpdates: () -> Unit = {}
 ) {
     ModalDrawerSheet {
         DrawerHeader(
@@ -118,6 +119,12 @@ fun MainNavigationDrawerContent(
             modifier = Modifier.padding(NavigationDrawerItemDefaults.ItemPadding)
         )
 
+        NavigationDrawerItem(
+            label = { Text("App-Updates") },
+            selected = false,
+            onClick = onAppUpdates,
+            modifier = Modifier.padding(NavigationDrawerItemDefaults.ItemPadding)
+        )
         Spacer(modifier = Modifier.weight(1f))
         Text(
             text = "Version ${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})",
